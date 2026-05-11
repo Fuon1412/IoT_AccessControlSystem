@@ -104,3 +104,6 @@ Desktop.ini
 # Local development
 local.settings.json
 local.json
+
+# Mosquitto — generated password file, never commit
+mosquitto/passwd

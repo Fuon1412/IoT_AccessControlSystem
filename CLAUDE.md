@@ -13,15 +13,43 @@ Off: "stop caveman" / "normal mode".
 - **Backend .NET 8** — strong typing, EF Core migrations handle schema clean, Swagger auto-gen, no extra setup
 - **Frontend React 19 + TanStack Router** — file-based routing, no boilerplate, pair with Vite HMR
 - **ESP32** — Wi-Fi built-in, enough GPIO for RFID + OLED + buzzer, 3.3V logic match RC522
+- **MQTT (planned)** — replacing HTTP POST, bidirectional, auto-reconnect, lower latency
 
 ## Data Flow
 
 ```
-ESP32 (RFID scan)
-  → POST /api/access-logs  (Wi-Fi, JSON)
-  → EF Core writes to SQL Server
-  → Frontend polls /api/access-logs
-  → Dashboard updates
+Current (REST):
+ESP32 (RFID scan) → POST /api/access-logs → EF Core → SQL Server → Frontend polls
+
+Planned (MQTT):
+ESP32 scan → publish access/{deviceId}/scan → Mosquitto broker
+Broker → MqttService (BackgroundService) → DB write + publish access/{deviceId}/response
+ESP32 ← response (grant/deny) ← broker
+Frontend ← SignalR push from MqttService (no polling)
+```
+
+## MQTT Architecture
+
+- **Broker**: Mosquitto (Docker: port 1883)
+- **ESP32 lib**: PubSubClient
+- **Backend lib**: MQTTnet (BackgroundService)
+- **Cloud alt**: HiveMQ Cloud / EMQX Cloud (no self-host)
+
+### Topic Map
+```
+access/{deviceId}/scan      # ESP32 publish — UID payload
+access/{deviceId}/response  # Backend publish — grant/deny + name
+access/{deviceId}/status    # ESP32 heartbeat
+devices/{deviceId}/command  # Backend → ESP32 commands (unlock, reboot)
+```
+
+### Payload Schema
+```json
+// ESP32 → broker (scan)
+{"device": "esp32-door-01", "uid": "A1B2C3D4"}
+
+// Backend → ESP32 (response)
+{"access": true, "name": "Nguyen Van A"}
 ```
 
 ## Key Constraints
@@ -29,21 +57,28 @@ ESP32 (RFID scan)
 - RC522 runs 3.3V — never connect 5V pin, module dies
 - CORS must include `http://localhost:5173` in dev, update `Program.cs` for prod
 - EF migrations run before first API call — `dotnet ef database update`
-- ESP32 MAC list hardcoded in firmware — update + reflash to add/remove users
+- ESP32 card list hardcoded in firmware — update + reflash to add/remove users
+- MQTT broker must start before backend — MqttService connect on startup
+- `mqtt.loop()` must run every loop() iteration on ESP32 — blocks if omitted
 
 ## Known Weak Points
 
 - No auth on API endpoints — anyone on network hit `/api/users`
+- No auth on MQTT broker — add username/password in mosquitto.conf for prod
 - RFID UID spoofable — physical security only, not cryptographic
 - SD card log + SQL Server log desync if Wi-Fi drop mid-write
-- No retry logic on ESP32 HTTP POST — failed requests silently dropped
+- ESP32 HTTP POST: no retry (current) — MQTT QoS 1 fixes this when implemented
+- MQTT message lost if broker down + ESP32 not buffering locally
 
 ## Priorities When Resuming
 
-1. Add JWT auth to backend endpoints
-2. Add retry queue on ESP32 for failed POSTs (store SPIFFS, flush on reconnect)
-3. Dashboard: real-time via SignalR instead of polling
-4. Admin UI: add/remove users without reflashing firmware
+1. Swap HTTP POST → MQTT publish on ESP32 (PubSubClient)
+2. Add MqttService BackgroundService in .NET — subscribe `access/+/scan`
+3. Add JWT auth to backend REST endpoints
+4. Broker auth — mosquitto.conf username/password
+5. Dashboard: SignalR push from MqttService (drop polling)
+6. Admin UI: add/remove users without reflashing firmware
+7. ESP32 retry queue — store failed publishes in SPIFFS, flush on reconnect
 
 ## File Locations — Quick Reference
 
@@ -52,6 +87,7 @@ ESP32 (RFID scan)
 | API endpoints | `backend/IoTAccessAPI/Program.cs` |
 | DB models | `backend/IoTAccessAPI/Models/` |
 | EF migrations | `backend/IoTAccessAPI/Migrations/` |
+| MQTT service | `backend/IoTAccessAPI/Services/MqttService.cs` |
 | Frontend routes | `frontend/app/src/routes/` |
 | CORS config | `backend/IoTAccessAPI/Program.cs` |
 | ESP32 firmware | `esp32_logic/` |
@@ -59,10 +95,12 @@ ESP32 (RFID scan)
 
 ## Dev Gotchas
 
+- Run broker → backend → frontend in order
 - Run backend before frontend — frontend fetches on mount, fails silent if API down
 - `dotnet run` uses `https://localhost:7114`, not `http` — check `VITE_API_URL` in `.env`
 - TanStack Router gen route types on save — don't hand-edit `routeTree.gen.ts`
 - EF Core needs SQL Server by default — swap SQLite for local dev without SQL Server install
+- Debug MQTT with **MQTT Explorer** (GUI) — connect to broker, watch all topics live
 
 ## ESP32 Pin Map
 
@@ -120,7 +158,7 @@ IoT Access Control System. Modern access control platform built with:
 - **Dev Server Port**: http://localhost:5173
 
 ### ESP32 Logic
-IoT firmware for physical access. Talks to backend API.
+IoT firmware for physical access. Talks to broker via MQTT.
 
 ## Key Files & Endpoints
 
@@ -145,15 +183,19 @@ GET  /swagger            - API documentation
 - .NET 8.0 SDK
 - Node.js 18+
 - SQL Server (or configure alternative DB)
+- Docker (for Mosquitto broker)
 
 ### Quick Start
 ```bash
-# Terminal 1: Backend
+# Terminal 1: Broker
+docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto
+
+# Terminal 2: Backend
 cd backend/IoTAccessAPI
 dotnet restore
 dotnet run
 
-# Terminal 2: Frontend
+# Terminal 3: Frontend
 cd frontend/app
 npm install
 npm run dev
@@ -165,6 +207,8 @@ npm run dev
 ```
 ASPNETCORE_ENVIRONMENT=Development
 ConnectionString=Server=.;Database=IoTAccessDb;Integrated Security=True;
+MQTT_HOST=localhost
+MQTT_PORT=1883
 ```
 
 **Frontend** (.env):
@@ -215,6 +259,16 @@ npm run preview               # Preview production build
 npm run lint                  # Run ESLint
 ```
 
+### MQTT Debug
+```bash
+# Subscribe all topics (requires mosquitto-clients)
+mosquitto_sub -h localhost -t "access/#" -v
+
+# Simulate ESP32 scan
+mosquitto_pub -h localhost -t "access/esp32-door-01/scan" \
+  -m '{"device":"esp32-door-01","uid":"A1B2C3D4"}'
+```
+
 ## Git Workflow
 - Branch naming: `feature/`, `bugfix/`, `chore/`
 - Commit messages: descriptive, present tense
@@ -232,6 +286,7 @@ Update `backend/IoTAccessAPI/Program.cs` for prod.
 - Publish backend: `dotnet publish -c Release`
 - Configure CORS for prod
 - Setup DB migrations for prod
+- Run Mosquitto as service or managed cloud broker
 
 ## Troubleshooting
 
@@ -247,3 +302,8 @@ Run `npm install` in `frontend/app/`
 ### Port Already in Use
 - Change frontend port in `vite.config.ts`
 - Change backend port in `launchSettings.json`
+
+### MQTT Not Connecting
+- Broker running? `docker ps`
+- Port 1883 open? `telnet localhost 1883`
+- Check MqttService logs in backend console

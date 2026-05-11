@@ -1,97 +1,236 @@
-# Backend API — Implementation Plan
+# IoT Access Control — Master Plan
 
-Derived from project CLAUDE.md insights. Backend-scoped priorities only.
+CLAUDE.md updated with MQTT architecture. Phases 1–4 done. New phases below.
 
-## Phase 1: Security (Critical)
+## Done ✓
 
-**Goal**: Lock down exposed API endpoints.
+| Phase | What |
+|---|---|
+| 1 | JWT auth + BCrypt + role-based access (Admin/User/Device) |
+| 2 | SignalR hub `/hubs/access` — real-time push to dashboard |
+| 3 | Admin API — user/device/card CRUD, `/api/cards/validate/{uid}` |
+| 4 | Idempotent access logs (RequestId), health endpoint + device silence alert |
+| — | Controller-interface-service refactor |
+| — | Docker: Dockerfiles + docker-compose + nginx proxy |
 
-### 1.1 JWT Authentication
-- Add `Microsoft.AspNetCore.Authentication.JwtBearer` package
-- Configure JWT in `Program.cs` (issuer, audience, secret from config)
-- Add `[Authorize]` to all endpoints except `/api/health` and `/swagger`
-- Create `POST /api/auth/login` endpoint (username + password → JWT)
-- Create `POST /api/auth/register` endpoint (admin-only)
-- Store hashed passwords (BCrypt) in User model
-- Add EF migration for auth fields (PasswordHash, Role)
+---
 
-### 1.2 Role-Based Access
-- Roles: `Admin`, `User`, `Device`
-- Admin: full CRUD on users, devices, logs
-- Device: POST access-logs only (ESP32 service account)
-- User: read-only dashboard access
+## Phase 5: MQTT Infrastructure
 
-**Known risk**: No auth now — anyone on network hit `/api/users`. Fix first.
+**Goal**: Broker + backend plumbing before any ESP32 swap.
 
-## Phase 2: Real-Time Communication
+### 5.1 Mosquitto in Docker
 
-**Goal**: Replace polling with push updates.
+Add to `docker-compose.yml`:
+```yaml
+mosquitto:
+  image: eclipse-mosquitto:2
+  ports:
+    - "1883:1883"
+  volumes:
+    - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+    - mosquitto_data:/mosquitto/data
+  healthcheck:
+    test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck"]
+    interval: 10s
+    retries: 5
+```
 
-### 2.1 SignalR Hub
-- Add `Microsoft.AspNetCore.SignalR` package
-- Create `AccessHub` — broadcast new access log entries
-- Wire hub in `Program.cs` (`/hubs/access`)
-- Update CORS to allow SignalR WebSocket connections
-- On new access log POST → notify all connected dashboard clients
+Add `mosquitto_data` to volumes block. Backend `depends_on` mosquitto healthy.
 
-### 2.2 ESP32 Endpoint Hardening
-- Validate POST body schema on `/api/access-logs`
-- Return proper error codes (400 bad request, 401 unauthorized)
-- Log failed attempts separately (audit trail)
+### 5.2 mosquitto.conf
 
-## Phase 3: Admin API
+`mosquitto/mosquitto.conf`:
+```
+listener 1883
+allow_anonymous true        # dev only — set false + add password_file for prod
 
-**Goal**: Manage users/devices without firmware reflash.
+persistence true
+persistence_location /mosquitto/data/
+log_dest stdout
+```
 
-### 3.1 User CRUD
-- `POST /api/users` — add user + RFID UID mapping
-- `PUT /api/users/{id}` — update user
-- `DELETE /api/users/{id}` — soft delete (keep audit trail)
-- `GET /api/users/{id}/access-logs` — per-user log history
+Prod hardening (Phase 5.3):
+```
+allow_anonymous false
+password_file /mosquitto/config/passwd
+```
+Generate: `mosquitto_passwd -c passwd <username>`
 
-### 3.2 Device CRUD
-- `POST /api/devices` — register new ESP32
-- `PUT /api/devices/{id}` — update config
-- `DELETE /api/devices/{id}` — decommission
-- `GET /api/devices/{id}/status` — last heartbeat, online/offline
+### 5.3 MQTTnet Package
 
-### 3.3 RFID Card Registry
-- New model: `RfidCard` (UID, UserId, Active, RegisteredAt)
-- `GET /api/cards` — list all registered cards
-- `POST /api/cards` — register card to user
-- `DELETE /api/cards/{id}` — deactivate card
-- ESP32 queries `/api/cards/validate/{uid}` instead of hardcoded map
+```bash
+cd backend/IoTAccessAPI
+dotnet add package MQTTnet --version 4.3.7
+```
 
-## Phase 4: Data Integrity
+Add to `appsettings.json`:
+```json
+"Mqtt": {
+  "Host": "localhost",
+  "Port": 1883,
+  "ClientId": "iot-backend",
+  "Username": "",
+  "Password": ""
+}
+```
 
-**Goal**: Fix SD card / SQL Server desync.
+Docker override in compose env:
+```
+Mqtt__Host=mosquitto
+Mqtt__Port=1883
+```
 
-### 4.1 Idempotent Access Logging
-- Add `RequestId` (GUID) to access log POST body
-- ESP32 generates ID locally, sends with request
-- Backend deduplicates on RequestId (upsert, not insert)
-- Supports ESP32 retry queue (SPIFFS buffer → flush on reconnect)
+---
 
-### 4.2 Health Monitoring
-- Expand `/api/health` — include DB connection status, last ESP32 heartbeat
-- Add `/api/health/devices` — per-device last-seen timestamp
-- Alert if device silent >5 min (configurable threshold)
+## Phase 6: Backend MqttService
+
+**Goal**: Backend subscribes broker, processes scans, pushes SignalR.
+
+### 6.1 IMqttService Interface
+
+`Services/Interfaces/IMqttService.cs`:
+- `Task PublishAsync(string topic, string payload)`
+- `Task SubscribeAsync(string topicFilter)`
+
+### 6.2 MqttService BackgroundService
+
+`Services/MqttService.cs` — `IHostedService` + `IMqttService`:
+
+```
+Connect to broker on startup
+Subscribe: access/+/scan
+Subscribe: access/+/status  (heartbeat)
+
+On access/{deviceId}/scan message:
+  1. Parse payload: { "device": "...", "uid": "..." }
+  2. Validate UID → IRfidCardService.ValidateAsync(uid)
+  3. Write AccessLog → IAccessLogService (reuse existing)
+  4. Publish response → access/{deviceId}/response
+     payload: { "access": true/false, "name": "..." }
+  5. SignalR broadcast → _hub.Clients.All.SendAsync("NewAccessLog", log)
+
+On access/{deviceId}/status message:
+  1. Parse deviceId from topic
+  2. IDeviceService.UpdateHeartbeatAsync(deviceId)
+```
+
+Payload schemas (match CLAUDE.md exactly):
+```json
+// ESP32 → broker (scan)
+{"device": "esp32-door-01", "uid": "A1B2C3D4"}
+
+// Backend → ESP32 (response)  
+{"access": true, "name": "Nguyen Van A"}
+```
+
+### 6.3 Register in Program.cs
+
+```csharp
+builder.Services.AddSingleton<IMqttService, MqttService>();
+builder.Services.AddHostedService(sp => (MqttService)sp.GetRequiredService<IMqttService>());
+```
+
+Singleton (not scoped) — one persistent broker connection per app lifetime.
+Inject `IServiceScopeFactory` inside MqttService for scoped DB access per message.
+
+### 6.4 Topic Map
+
+| Topic | Direction | Handler |
+|---|---|---|
+| `access/{deviceId}/scan` | ESP32 → backend | Validate + log + respond |
+| `access/{deviceId}/response` | Backend → ESP32 | Publish only |
+| `access/{deviceId}/status` | ESP32 → backend | UpdateHeartbeat |
+| `devices/{deviceId}/command` | Backend → ESP32 | Publish only (future) |
+
+---
+
+## Phase 7: ESP32 MQTT Migration
+
+**Goal**: Replace HTTP POST with MQTT publish. Drop hardcoded UID map.
+
+### 7.1 Libraries (Arduino/PlatformIO)
+
+```ini
+# platformio.ini
+lib_deps =
+  knolleary/PubSubClient @ ^2.8
+  bblanchon/ArduinoJson @ ^7.0
+```
+
+### 7.2 Flow Change
+
+Old:
+```
+Scan UID → GET /api/cards/validate/{uid} → POST /api/access-logs
+```
+
+New:
+```
+Scan UID → mqtt.publish("access/{deviceId}/scan", payload)
+         → wait for response on "access/{deviceId}/response"
+         → grant/deny door + OLED + buzzer
+```
+
+### 7.3 ESP32 Implementation Notes
+
+- `mqtt.loop()` every `loop()` iteration — blocks reconnect if omitted
+- Subscribe `access/{deviceId}/response` in `reconnect()` after each connect
+- Callback `onMqttMessage(topic, payload)` → parse JSON → actuate
+- Heartbeat: `mqtt.publish("access/{deviceId}/status", "online")` every 60s
+- **No REST calls needed** — broker handles all device comms
+
+### 7.4 SPIFFS Retry Queue
+
+On publish fail (broker down):
+1. Serialize `{uid, timestamp, deviceId}` to SPIFFS file (append)
+2. On reconnect: read SPIFFS, flush queued publishes, delete file
+3. Limit queue: 50 entries max — discard oldest on overflow
+
+### 7.5 Device Auth on Broker (prod)
+
+ESP32 connects with credentials:
+```cpp
+client.connect(deviceId, MQTT_USER, MQTT_PASS);
+```
+Store in `config.h` or NVS — never hardcode in shared firmware.
+
+---
+
+## Phase 8: Broker Auth (Prod Hardening)
+
+After MQTT working in dev:
+
+1. `mosquitto_passwd -c mosquitto/passwd backend-service`
+2. `mosquitto_passwd -b mosquitto/passwd esp32-door-01 <pass>`
+3. Set `allow_anonymous false` in `mosquitto.conf`
+4. Add creds to backend `appsettings.json` (`Mqtt:Username`, `Mqtt:Password`)
+5. Flash ESP32 with credentials in NVS (not firmware)
+
+---
 
 ## File Impact Map
 
-| File | Changes |
-|---|---|
-| `Program.cs` | JWT config, SignalR hub, new endpoints, CORS update |
-| `Models/` | User (add auth fields), RfidCard (new), AccessLog (add RequestId) |
-| `Migrations/` | New migrations per phase |
-| `appsettings.json` | JWT secret, SignalR config |
-| `.csproj` | New packages (JWT, SignalR, BCrypt) |
+| File | Phase | Change |
+|---|---|---|
+| `docker-compose.yml` | 5.1 | Add mosquitto service + volume |
+| `mosquitto/mosquitto.conf` | 5.1 | New file |
+| `IoTAccessAPI.csproj` | 5.3 | Add MQTTnet package |
+| `appsettings.json` | 5.3 | Add Mqtt config block |
+| `Services/Interfaces/IMqttService.cs` | 6.1 | New interface |
+| `Services/MqttService.cs` | 6.2 | New BackgroundService |
+| `Program.cs` | 6.3 | Register singleton + hosted service |
+| `esp32_logic/main.cpp` | 7.2–7.4 | Replace HTTP with MQTT |
 
-## Order of Execution
+---
+
+## Execution Order
 
 ```
-Phase 1.1 → 1.2 → 2.1 → 2.2 → 3.3 → 3.1 → 3.2 → 4.1 → 4.2
+5.1 → 5.2 → 5.3 → 6.1 → 6.2 → 6.3 → test broker ↔ backend
+→ 7.1 → 7.2 → 7.3 → 7.4 → test ESP32 ↔ broker ↔ backend
+→ 8 (prod only)
 ```
 
-Phase 1 first — no point building features on unsecured API.
-Phase 3.3 (card registry) before 3.1 (user CRUD) — ESP32 needs card validation endpoint to drop hardcoded map.
+Broker must be reachable before MqttService starts — `depends_on: mosquitto: condition: service_healthy`.
+Test backend MQTT without ESP32: `mosquitto_pub -h localhost -t "access/esp32-door-01/scan" -m '{"device":"esp32-door-01","uid":"A1B2C3D4"}'`

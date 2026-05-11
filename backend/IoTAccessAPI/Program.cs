@@ -21,12 +21,21 @@ builder.Services.AddScoped<IDeviceService, DeviceService>();
 builder.Services.AddScoped<IAccessLogService, AccessLogService>();
 builder.Services.AddScoped<IRfidCardService, RfidCardService>();
 
+// MQTT — singleton connection, hosted service lifecycle
+builder.Services.AddSingleton<MqttService>();
+builder.Services.AddSingleton<IMqttService>(sp => sp.GetRequiredService<MqttService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MqttService>());
+
 // CORS — AllowCredentials required for SignalR WebSocket
+var corsOrigins = builder.Configuration
+    .GetSection("Cors:Origins").Get<string[]>()
+    ?? ["http://localhost:5173", "http://localhost:3000", "http://localhost"];
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("DevelopmentPolicy", policy =>
     {
-        policy.WithOrigins("http://localhost:5173", "http://localhost:3000")
+        policy.WithOrigins(corsOrigins)
               .AllowAnyMethod()
               .AllowAnyHeader()
               .AllowCredentials();
@@ -98,6 +107,15 @@ builder.Services.AddControllers();
 
 var app = builder.Build();
 
+// Auto-migrate on startup (set AUTO_MIGRATE=true in production/Docker)
+if (app.Environment.IsDevelopment() ||
+    builder.Configuration.GetValue<bool>("AUTO_MIGRATE"))
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+}
+
 app.UseCors("DevelopmentPolicy");
 
 if (app.Environment.IsDevelopment())
@@ -106,7 +124,9 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+// HTTPS redirect handled by reverse proxy in production
+if (app.Environment.IsDevelopment())
+    app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 
