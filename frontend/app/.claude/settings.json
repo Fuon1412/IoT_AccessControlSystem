@@ -1,0 +1,9 @@
+{
+  "description": "Frontend application settings",
+  "allowedCommands": [
+    "npm run",
+    "npm install",
+    "npm test",
+    "git"
+  ]
+}

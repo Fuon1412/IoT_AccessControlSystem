@@ -1,0 +1,10 @@
+{
+  "description": "Backend API project settings",
+  "allowedCommands": [
+    "dotnet run",
+    "dotnet build",
+    "dotnet test",
+    "dotnet ef",
+    "git"
+  ]
+}
