@@ -1,0 +1,103 @@
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.classpath
+*.sublime-workspace
+*.sublime-project
+
+# Build outputs
+bin/
+obj/
+dist/
+build/
+.next/
+out/
+
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+*.lock
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# .NET specific
+*.dll
+*.exe
+*.so
+*.dylib
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.docstates
+bin/
+obj/
+appsettings.*.json
+!appsettings.json
+!appsettings.Development.json
+
+# Frontend build
+frontend/app/dist/
+frontend/app/.vite/
+
+# Testing
+frontend/app/.vitest/
+frontend/app/coverage/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.mdf
+*.ldf
+
+# Local development
+local.settings.json
+local.json
