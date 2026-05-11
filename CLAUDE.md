@@ -1,9 +1,88 @@
+## Communication Style
+Caveman terse. Tech exact. Fluff die.
+Drop: articles, filler, pleasantries, hedging.
+Fragments OK. Short synonyms. Code unchanged.
+ACTIVE EVERY RESPONSE. No revert.
+Off: "stop caveman" / "normal mode".
+
 # IoT Access Control System - Project Documentation
+# Project Insight — IoT Access Control System
+
+## Stack Decisions
+
+- **Backend .NET 8** — strong typing, EF Core migrations handle schema clean, Swagger auto-gen, no extra setup
+- **Frontend React 19 + TanStack Router** — file-based routing, no boilerplate, pair with Vite HMR
+- **ESP32** — Wi-Fi built-in, enough GPIO for RFID + OLED + buzzer, 3.3V logic match RC522
+
+## Data Flow
+
+```
+ESP32 (RFID scan)
+  → POST /api/access-logs  (Wi-Fi, JSON)
+  → EF Core writes to SQL Server
+  → Frontend polls /api/access-logs
+  → Dashboard updates
+```
+
+## Key Constraints
+
+- RC522 runs 3.3V — never connect 5V pin, module dies
+- CORS must include `http://localhost:5173` in dev, update `Program.cs` for prod
+- EF migrations run before first API call — `dotnet ef database update`
+- ESP32 MAC list hardcoded in firmware — update + reflash to add/remove users
+
+## Known Weak Points
+
+- No auth on API endpoints — anyone on network hit `/api/users`
+- RFID UID spoofable — physical security only, not cryptographic
+- SD card log + SQL Server log desync if Wi-Fi drop mid-write
+- No retry logic on ESP32 HTTP POST — failed requests silently dropped
+
+## Priorities When Resuming
+
+1. Add JWT auth to backend endpoints
+2. Add retry queue on ESP32 for failed POSTs (store SPIFFS, flush on reconnect)
+3. Dashboard: real-time via SignalR instead of polling
+4. Admin UI: add/remove users without reflashing firmware
+
+## File Locations — Quick Reference
+
+| What | Where |
+|---|---|
+| API endpoints | `backend/IoTAccessAPI/Program.cs` |
+| DB models | `backend/IoTAccessAPI/Models/` |
+| EF migrations | `backend/IoTAccessAPI/Migrations/` |
+| Frontend routes | `frontend/app/src/routes/` |
+| CORS config | `backend/IoTAccessAPI/Program.cs` |
+| ESP32 firmware | `esp32_logic/` |
+| RFID card list | `esp32_logic/main.cpp` (hardcoded map) |
+
+## Dev Gotchas
+
+- Run backend before frontend — frontend fetches on mount, fails silent if API down
+- `dotnet run` uses `https://localhost:7114`, not `http` — check `VITE_API_URL` in `.env`
+- TanStack Router gen route types on save — don't hand-edit `routeTree.gen.ts`
+- EF Core needs SQL Server by default — swap SQLite for local dev without SQL Server install
+
+## ESP32 Pin Map
+
+| Module | Pin |
+|---|---|
+| RC522 SDA | GPIO 21 |
+| RC522 SCK | GPIO 18 |
+| RC522 MOSI | GPIO 23 |
+| RC522 MISO | GPIO 19 |
+| RC522 RST | GPIO 22 |
+| OLED SDA | GPIO 21 (shared I2C) |
+| OLED SCL | GPIO 22 (shared I2C) |
+| SD card CS | GPIO 5 |
+| Buzzer | GPIO 4 |
+| RC522 VCC | 3.3V only |
 
 ## Project Overview
-IoT Access Control System is a modern access control management platform built with:
-- **Backend**: .NET 8 Web API with Entity Framework Core
-- **Frontend**: React with TanStack Router, Tailwind CSS, and shadcn components
+IoT Access Control System. Modern access control platform built with:
+- **Backend**: .NET 8 Web API + Entity Framework Core
+- **Frontend**: React + TanStack Router, Tailwind CSS, shadcn components
 - **ESP32 Logic**: IoT device firmware for access control
 
 ## Directory Structure
@@ -22,10 +101,10 @@ IoT Access Control System is a modern access control management platform built w
 
 ### Backend (IoTAccessAPI)
 - **Framework**: ASP.NET Core 8
-- **Database**: Entity Framework Core with SQL Server
+- **Database**: Entity Framework Core + SQL Server
 - **Key Features**:
   - RESTful API endpoints
-  - CORS enabled for development
+  - CORS enabled for dev
   - Health check endpoint
   - Device management
   - Access logging
@@ -34,15 +113,14 @@ IoT Access Control System is a modern access control management platform built w
 **Default Port**: https://localhost:7114
 
 ### Frontend (app)
-- **Framework**: React 19 with TypeScript
+- **Framework**: React 19 + TypeScript
 - **Routing**: TanStack Router (file-based)
-- **Styling**: Tailwind CSS with shadcn components
+- **Styling**: Tailwind CSS + shadcn components
 - **Build Tool**: Vite
 - **Dev Server Port**: http://localhost:5173
 
 ### ESP32 Logic
-- IoT device firmware for physical access control
-- Communication with backend API
+IoT firmware for physical access. Talks to backend API.
 
 ## Key Files & Endpoints
 
@@ -66,7 +144,7 @@ GET  /swagger            - API documentation
 ### Prerequisites
 - .NET 8.0 SDK
 - Node.js 18+
-- SQL Server (or configure alternative database)
+- SQL Server (or configure alternative DB)
 
 ### Quick Start
 ```bash
@@ -99,12 +177,12 @@ VITE_API_URL=https://localhost:7114
 ### Adding a New Route (Frontend)
 1. Create file in `frontend/app/src/routes/`
 2. Use TanStack Router file-based routing
-3. Import TanStack Router hooks as needed
+3. Import TanStack Router hooks
 
 ### Adding an API Endpoint (Backend)
-1. Create controller or use minimal API approach
+1. Create controller or minimal API
 2. Add endpoint in `Program.cs`
-3. Configure CORS if needed
+3. Configure CORS
 4. Document in Swagger
 
 ### Running Tests
@@ -140,20 +218,20 @@ npm run lint                  # Run ESLint
 ## Git Workflow
 - Branch naming: `feature/`, `bugfix/`, `chore/`
 - Commit messages: descriptive, present tense
-- `.gitignore` covers both .NET and Node.js projects
+- `.gitignore` covers .NET + Node.js projects
 
 ## CORS Configuration
-Development CORS is enabled for:
+Dev CORS enabled for:
 - `http://localhost:5173` (Vite dev)
-- `http://localhost:3000` (alternative port)
+- `http://localhost:3000` (alt port)
 
-Update in `backend/IoTAccessAPI/Program.cs` for production.
+Update `backend/IoTAccessAPI/Program.cs` for prod.
 
 ## Deployment Notes
 - Build frontend: `npm run build`
 - Publish backend: `dotnet publish -c Release`
-- Configure production CORS accordingly
-- Set up database migrations for production
+- Configure CORS for prod
+- Setup DB migrations for prod
 
 ## Troubleshooting
 

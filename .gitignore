@@ -17,6 +17,9 @@ dist/
 build/
 .next/
 out/
+backend/IoTAccessAPI/obj/
+backend/IoTAccessAPI/bin/
+backend/IoTAccessAPI/publish/
 
 # Dependencies
 node_modules/

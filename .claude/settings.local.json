@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/phuon/.claude/plugins/cache/caveman/caveman/754795ada42d/skills/caveman-compress/**)",
+      "Bash(python3 -m scripts \"D:\\\\MyProject\\\\IoT_AccessControlSystem\\\\CLAUDE.md\")",
+      "Bash(dotnet add:*)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet ef:*)"
+    ]
+  }
+}
