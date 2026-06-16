@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using IoTAccessAPI.DTOs.AccessLogs;
 using IoTAccessAPI.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -10,18 +11,33 @@ namespace IoTAccessAPI.Controllers;
 public class AccessLogsController : ControllerBase
 {
     private readonly IAccessLogService _logService;
+    private readonly IUserService _userService;
 
-    public AccessLogsController(IAccessLogService logService)
+    public AccessLogsController(IAccessLogService logService, IUserService userService)
     {
         _logService = logService;
+        _userService = userService;
     }
 
     [HttpGet]
-    [Authorize(Roles = "Admin,User")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> GetAll()
     {
         var logs = await _logService.GetAllAsync();
-        return Ok(new { logs, total = logs.Count() });
+        return Ok(logs);
+    }
+
+    /// <summary>Employee self-service: only the caller's own access history.</summary>
+    [HttpGet("mine")]
+    [Authorize(Roles = "Employee,Admin")]
+    public async Task<IActionResult> GetMine()
+    {
+        var idClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!int.TryParse(idClaim, out var userId))
+            return Unauthorized(new { error = "Invalid token" });
+
+        var logs = await _userService.GetAccessLogsAsync(userId);
+        return Ok(logs);
     }
 
     [HttpPost]

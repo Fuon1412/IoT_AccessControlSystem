@@ -17,12 +17,13 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<User>(entity =>
         {
             entity.HasIndex(u => u.Username).IsUnique();
-            entity.Property(u => u.Role).HasDefaultValue("User");
+            entity.Property(u => u.Role).HasDefaultValue("Employee");
         });
 
         modelBuilder.Entity<Device>(entity =>
         {
             entity.HasIndex(d => d.MacAddress).IsUnique();
+            entity.HasIndex(d => d.Name).IsUnique(); // prevent duplicate device names
         });
 
         modelBuilder.Entity<AccessLog>(entity =>
@@ -44,7 +45,7 @@ public class AppDbContext : DbContext
             entity.HasOne(r => r.User)
                   .WithMany()
                   .HasForeignKey(r => r.UserId)
-                  .OnDelete(DeleteBehavior.Cascade);
+                  .OnDelete(DeleteBehavior.SetNull); // unassign card if user deleted
         });
     }
 }

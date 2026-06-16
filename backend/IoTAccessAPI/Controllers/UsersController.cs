@@ -21,7 +21,7 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> GetAll()
     {
         var users = await _userService.GetAllAsync();
-        return Ok(new { users, total = users.Count() });
+        return Ok(users);
     }
 
     [HttpGet("{id:int}")]
@@ -41,17 +41,41 @@ public class UsersController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
     }
 
+    /// <summary>Create an Employee account (can only view own access history).
+    /// Optionally links an RFID card UID in the same call.</summary>
+    [HttpPost("employees")]
+    public async Task<IActionResult> CreateEmployee([FromBody] CreateUserRequest request)
+    {
+        var employee = request with { Role = "Employee" };
+        var result = await _userService.CreateAsync(employee);
+        if (result is null)
+            return Conflict(new { error = "Username already exists" });
+
+        return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
+    }
+
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateUserRequest request)
     {
+        if (await _userService.GetByIdAsync(id) is null)
+            return NotFound();
+
         var result = await _userService.UpdateAsync(id, request);
-        return result is null ? NotFound() : Ok(result);
+        return result is null ? Conflict(new { error = "Username already exists" }) : Ok(result);
+    }
+
+    /// <summary>Admin resets a user's password (no current-password required).</summary>
+    [HttpPut("{id:int}/password")]
+    public async Task<IActionResult> ResetPassword(int id, [FromBody] ResetPasswordRequest request)
+    {
+        var ok = await _userService.ResetPasswordAsync(id, request.NewPassword);
+        return ok ? NoContent() : NotFound();
     }
 
     [HttpDelete("{id:int}")]
-    public async Task<IActionResult> Deactivate(int id)
+    public async Task<IActionResult> Delete(int id)
     {
-        var success = await _userService.DeactivateAsync(id);
+        var success = await _userService.DeleteAsync(id);
         return success ? NoContent() : NotFound();
     }
 
@@ -59,6 +83,6 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> GetAccessLogs(int id)
     {
         var logs = await _userService.GetAccessLogsAsync(id);
-        return Ok(new { logs, total = logs.Count() });
+        return Ok(logs);
     }
 }

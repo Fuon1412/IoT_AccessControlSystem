@@ -10,9 +10,9 @@ using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Database
+// Database — PostgreSQL (Npgsql)
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // Services
 builder.Services.AddScoped<IAuthService, AuthService>();
@@ -114,6 +114,10 @@ if (app.Environment.IsDevelopment() ||
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
+
+    // Idempotent seed (users + devices). Gated by SEED_DATA=true. Cards assigned later.
+    await DbSeeder.SeedAsync(db, app.Configuration,
+        scope.ServiceProvider.GetRequiredService<ILogger<Program>>());
 }
 
 app.UseCors("DevelopmentPolicy");

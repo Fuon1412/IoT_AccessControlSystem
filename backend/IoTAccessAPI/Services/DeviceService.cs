@@ -45,17 +45,47 @@ public class DeviceService : IDeviceService
         return new DeviceStatusDto(device.Id, device.Name, device.LastHeartbeat, isOnline, status);
     }
 
-    public async Task<DeviceDto> CreateAsync(CreateDeviceRequest request)
+    public async Task<DeviceDto?> CreateAsync(CreateDeviceRequest request)
     {
+        // Guard unique constraints — return null → controller responds 409 (not 500).
+        if (await _db.Devices.AnyAsync(d => d.Name == request.Name))
+            return null;
+        if (!string.IsNullOrWhiteSpace(request.MacAddress)
+            && await _db.Devices.AnyAsync(d => d.MacAddress == request.MacAddress))
+            return null;
+
         var device = new Device
         {
             Name = request.Name,
-            MacAddress = request.MacAddress,
-            Location = request.Location
+            MacAddress = request.MacAddress ?? string.Empty,
+            Location = request.Location ?? string.Empty
         };
         _db.Devices.Add(device);
         await _db.SaveChangesAsync();
         return ToDto(device);
+    }
+
+    public async Task<int> EnsureDeviceByNameAsync(string name)
+    {
+        var device = await _db.Devices.FirstOrDefaultAsync(d => d.Name == name);
+        if (device is null)
+        {
+            // Self-provision: ESP32 reported a name we don't know → register it.
+            // MAC unknown at this point — use a unique placeholder derived from name.
+            device = new Device
+            {
+                Name = name,
+                MacAddress = $"auto:{name}",
+                Location = "Auto-registered",
+                IsActive = true,
+            };
+            _db.Devices.Add(device);
+            await _db.SaveChangesAsync();
+        }
+
+        device.LastHeartbeat = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return device.Id;
     }
 
     public async Task<DeviceDto?> UpdateAsync(int id, UpdateDeviceRequest request)

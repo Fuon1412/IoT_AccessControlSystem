@@ -21,6 +21,10 @@ public class MqttService : IHostedService, IMqttService
     private MqttClientOptions _options = null!;
     private CancellationTokenSource _cts = new();
 
+    // Topic prefix — shared public broker requires a unique namespace.
+    // Must match firmware TOPIC_PREFIX. Config: Mqtt:TopicPrefix (default iot7f3a).
+    private string _prefix = "iot7f3a";
+
     public bool IsConnected => _client?.IsConnected ?? false;
 
     public MqttService(
@@ -41,6 +45,7 @@ public class MqttService : IHostedService, IMqttService
     {
         var host = _config["Mqtt:Host"] ?? "localhost";
         var port = _config.GetValue<int>("Mqtt:Port", 1883);
+        _prefix = (_config["Mqtt:TopicPrefix"] ?? "iot7f3a").TrimEnd('/');
         var clientId = _config["Mqtt:ClientId"] ?? "iot-backend";
         var username = _config["Mqtt:Username"];
         var password = _config["Mqtt:Password"];
@@ -91,6 +96,9 @@ public class MqttService : IHostedService, IMqttService
         await _client.PublishAsync(message, ct);
     }
 
+    public Task PublishCommandAsync(string deviceName, string payload, CancellationToken ct = default)
+        => PublishAsync($"{_prefix}/devices/{deviceName}/command", payload, ct);
+
     // ── Connect + subscribe ──────────────────────────────────────────────────
 
     private async Task ConnectWithRetryAsync(CancellationToken ct)
@@ -118,16 +126,16 @@ public class MqttService : IHostedService, IMqttService
     private async Task SubscribeAsync(CancellationToken ct)
     {
         await _client.SubscribeAsync(new MqttTopicFilterBuilder()
-            .WithTopic("access/+/scan")
+            .WithTopic($"{_prefix}/access/+/scan")
             .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
             .Build(), ct);
 
         await _client.SubscribeAsync(new MqttTopicFilterBuilder()
-            .WithTopic("access/+/status")
+            .WithTopic($"{_prefix}/access/+/status")
             .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce)
             .Build(), ct);
 
-        _logger.LogInformation("MQTT subscribed: access/+/scan, access/+/status");
+        _logger.LogInformation("MQTT subscribed: {Prefix}/access/+/scan, {Prefix}/access/+/status", _prefix, _prefix);
     }
 
     private async Task OnDisconnectedAsync(MqttClientDisconnectedEventArgs args)
@@ -151,14 +159,17 @@ public class MqttService : IHostedService, IMqttService
 
         try
         {
+            // Topic: {prefix}/access/{device}/{verb}
             var segments = topic.Split('/');
-            if (segments.Length != 3) return;
+            if (segments.Length != 4) return;
+            if (segments[0] != _prefix || segments[1] != "access") return;
 
-            var deviceTopic = segments[1];
+            var deviceTopic = segments[2];
+            var verb = segments[3];
 
-            if (segments[2] == "scan")
+            if (verb == "scan")
                 await HandleScanAsync(deviceTopic, payload);
-            else if (segments[2] == "status")
+            else if (verb == "status")
                 await HandleHeartbeatAsync(deviceTopic);
         }
         catch (Exception ex)
@@ -191,27 +202,24 @@ public class MqttService : IHostedService, IMqttService
         var logService = scope.ServiceProvider.GetRequiredService<IAccessLogService>();
         var deviceService = scope.ServiceProvider.GetRequiredService<IDeviceService>();
 
-        // Resolve device
-        var allDevices = await deviceService.GetAllAsync();
-        var device = allDevices.FirstOrDefault(d =>
-            d.Name == deviceName || d.Id.ToString() == deviceTopic);
-
-        if (device is null)
-        {
-            _logger.LogWarning("Scan from unknown device: {Device}", deviceName);
-            return;
-        }
+        // Resolve device — auto-register if unknown (self-provisioning).
+        var deviceId = await deviceService.EnsureDeviceByNameAsync(deviceName);
 
         // Validate card
         var validation = await cardService.ValidateAsync(uid);
+
+        // Denied → auto-store the UID (unassigned) so admin can assign it later.
+        // Idempotent: no duplicate row if already known.
+        if (!validation.IsValid)
+            await cardService.EnsureCardExistsAsync(uid);
 
         // Write log
         var logRequest = new CreateAccessLogRequest(
             RequestId: Guid.NewGuid(),
             RfidUid: uid,
-            DeviceId: device.Id,
+            DeviceId: deviceId,
             AccessGranted: validation.IsValid,
-            DenyReason: validation.IsValid ? null : "Card not registered or inactive",
+            DenyReason: validation.IsValid ? null : "Card not assigned or inactive",
             Timestamp: DateTime.UtcNow);
 
         await logService.CreateAsync(logRequest); // also broadcasts via SignalR
@@ -220,10 +228,10 @@ public class MqttService : IHostedService, IMqttService
         var response = JsonSerializer.Serialize(new
         {
             access = validation.IsValid,
-            name = validation.Username ?? string.Empty
+            name = validation.DisplayName ?? validation.Username ?? string.Empty
         });
 
-        await PublishAsync($"access/{deviceTopic}/response", response);
+        await PublishAsync($"{_prefix}/access/{deviceTopic}/response", response);
 
         _logger.LogInformation("Scan uid={Uid} device={Device} granted={Granted} user={User}",
             uid, deviceName, validation.IsValid, validation.Username ?? "-");
@@ -236,16 +244,8 @@ public class MqttService : IHostedService, IMqttService
         using var scope = _scopeFactory.CreateScope();
         var deviceService = scope.ServiceProvider.GetRequiredService<IDeviceService>();
 
-        if (int.TryParse(deviceTopic, out var deviceId))
-        {
-            await deviceService.UpdateHeartbeatAsync(deviceId);
-        }
-        else
-        {
-            var devices = await deviceService.GetAllAsync();
-            var device = devices.FirstOrDefault(d => d.Name == deviceTopic);
-            if (device is not null)
-                await deviceService.UpdateHeartbeatAsync(device.Id);
-        }
+        // deviceTopic is the device name (firmware DEVICE_ID). Auto-register if
+        // unknown so a fresh ESP32 appears in the registry on its first heartbeat.
+        await deviceService.EnsureDeviceByNameAsync(deviceTopic);
     }
 }

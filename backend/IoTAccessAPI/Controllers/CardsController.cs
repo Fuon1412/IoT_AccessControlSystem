@@ -21,7 +21,16 @@ public class CardsController : ControllerBase
     public async Task<IActionResult> GetAll()
     {
         var cards = await _cardService.GetAllAsync();
-        return Ok(new { cards, total = cards.Count() });
+        return Ok(cards);
+    }
+
+    /// <summary>Cards seen by readers but not yet assigned to a user.</summary>
+    [HttpGet("unassigned")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetUnassigned()
+    {
+        var cards = await _cardService.GetUnassignedAsync();
+        return Ok(cards);
     }
 
     [HttpPost]
@@ -30,9 +39,18 @@ public class CardsController : ControllerBase
     {
         var result = await _cardService.RegisterAsync(request);
         if (result is null)
-            return Conflict(new { error = "UID already registered or user not found" });
+            return Conflict(new { error = "User not found" });
 
         return CreatedAtAction(nameof(GetAll), new { id = result.Id }, result);
+    }
+
+    /// <summary>Assign an existing (e.g. auto-stored unassigned) card to a user.</summary>
+    [HttpPut("{id:int}/assign")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Assign(int id, [FromBody] AssignCardRequest request)
+    {
+        var result = await _cardService.AssignAsync(id, request.UserId);
+        return result is null ? NotFound(new { error = "Card or user not found" }) : Ok(result);
     }
 
     [HttpDelete("{id:int}")]

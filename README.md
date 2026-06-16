@@ -8,7 +8,7 @@ Physical access control platform. ESP32 scans RFID cards → validates against b
 
 | Layer | Tech |
 |---|---|
-| Backend | .NET 8 Web API, EF Core, SQL Server |
+| Backend | .NET 8 Web API, EF Core, PostgreSQL (Npgsql) |
 | Frontend | React 19, TanStack Router, Tailwind CSS, shadcn |
 | IoT Device | ESP32, RC522 RFID, OLED, SD card, buzzer |
 | Real-time | SignalR WebSocket |
@@ -20,12 +20,18 @@ Physical access control platform. ESP32 scans RFID cards → validates against b
 
 ```
 RC522 (RFID scan)
-  → ESP32 validates UID: GET /api/cards/validate/{uid}
-  → ESP32 logs result:   POST /api/access-logs  (idempotent, RequestId)
-  → EF Core → SQL Server
+  → ESP32 publishes MQTT: access/{deviceId}/scan  {device, uid}
+  → MqttService (BackgroundService) validates UID + writes log
+  → EF Core → PostgreSQL
+  → backend publishes  access/{deviceId}/response  {access, name}
+  → ESP32: GRANTED shows name on OLED / DENIED buzzes
   → SignalR broadcasts NewAccessLog to dashboard
   → React dashboard updates live
+Offline → ESP32 buffers scan in SPIFFS, flushes on reconnect
 ```
+
+> REST endpoints (`/api/cards/validate`, `POST /api/access-logs`) remain available
+> for tooling/manual use, but live device flow goes through MQTT.
 
 ### Backend Structure
 
@@ -66,18 +72,28 @@ ESP32 uses a `Device`-role JWT service account.
 ### Prerequisites
 - .NET 8.0 SDK
 - Node.js 18+
-- SQL Server (or swap to SQLite — see below)
+- PostgreSQL 16 (or use Docker compose — below)
 
-### Backend
+### Docker (full stack — recommended)
 
 ```bash
+cp .env.example .env          # edit secrets
+docker compose up --build     # postgres + mosquitto + backend + frontend
+```
+UI at `http://localhost`. First boot seeds Admin (`admin` / `admin123` — change before prod).
+
+### Backend (local dev)
+
+```bash
+# Postgres (or point connection string at an existing instance)
+docker run -d --name pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=IoTAccessDb -p 5432:5432 postgres:16-alpine
+
 cd backend/IoTAccessAPI
 dotnet restore
-dotnet ef database update   # applies migrations, creates DB
-dotnet run
+dotnet run                    # auto-migrates + seeds in Development
 ```
 
-API: `https://localhost:7118` | Swagger: `https://localhost:7118/swagger`
+API: `https://localhost:7114` | Swagger: `https://localhost:7114/swagger`
 
 ### Frontend
 
@@ -95,25 +111,24 @@ UI: `http://localhost:5173`
 ```json
 {
   "ConnectionStrings": {
-    "DefaultConnection": "Server=.;Database=IoTAccessDb;Integrated Security=True;TrustServerCertificate=True;"
+    "DefaultConnection": "Host=localhost;Port=5432;Database=IoTAccessDb;Username=postgres;Password=postgres"
   },
-  "Jwt": {
-    "Secret": "dev-secret-change-in-production-min-32-chars!!"
-  }
+  "Jwt": { "Secret": "dev-secret-change-in-production-min-32-chars!!" },
+  "Seed": { "AdminUsername": "admin", "AdminPassword": "admin123" },
+  "SEED_DATA": true
 }
 ```
 
 **`frontend/app/.env`**:
 ```
-VITE_API_URL=https://localhost:7118
+VITE_API_URL=https://localhost:7114
 ```
 
-### SQLite (no SQL Server)
+### Seed data
 
-```bash
-dotnet add package Microsoft.EntityFrameworkCore.Sqlite
-```
-Change `UseSqlServer` → `UseSqlite("Data Source=iot.db")` in `Program.cs`.
+`SEED_DATA=true` runs an idempotent startup seed (`Data/DbSeeder.cs`):
+operators (`admin`/`operator`/`door-service`) + device `esp32-door-01` (matches firmware `DEVICE_ID`).
+RFID cards are **not** seeded — assign UID → user via the Cards screen or `POST /api/cards`.
 
 ---
 
@@ -173,27 +188,28 @@ GET /api/health/devices       public — per-device heartbeat + silent alert
 
 ### Pin Map
 
+Verified against `esp32_logic/RFID.ino`. RC522 = SPI, OLED = I2C (separate buses).
+Libs: **MFRC522v2** (driver-based), **SH1106** OLED (`Adafruit_SH110X`), active buzzer (`digitalWrite`).
+
 | Module | GPIO |
 |---|---|
-| RC522 SDA | 21 |
+| RC522 SS (SDA) | 5 |
 | RC522 SCK | 18 |
 | RC522 MOSI | 23 |
 | RC522 MISO | 19 |
-| RC522 RST | 22 |
-| OLED SDA | 21 (shared I2C) |
-| OLED SCL | 22 (shared I2C) |
-| SD card CS | 5 |
-| Buzzer | 4 |
+| OLED SDA | 21 (I2C) |
+| OLED SCL | 22 (I2C) |
+| Buzzer | 32 (active) |
 | RC522 VCC | **3.3V only — never 5V** |
 
 ### Flow
 
-1. Scan card → read UID
-2. `GET /api/cards/validate/{uid}` with Device JWT
-3. If `isValid=true` → unlock relay + green OLED
-4. `POST /api/access-logs` with new GUID as `requestId`
-5. On Wi-Fi failure → store log in SPIFFS, flush on reconnect (retry is safe — idempotent)
-6. `PATCH /api/devices/{id}/heartbeat` every 60s
+1. Scan card → read UID (lowercase hex, no separator)
+2. Publish `access/{deviceId}/scan` `{device, uid}` to broker
+3. MqttService validates + logs, publishes `access/{deviceId}/response` `{access, name}`
+4. GRANTED → OLED shows user name + confirm beep · DENIED → "DENIED!" + 3 alarm beeps
+5. On disconnect/timeout → buffer scan in SPIFFS, flush on reconnect
+6. Heartbeat: publish `access/{deviceId}/status` = "online" every 60s
 
 ---
 
@@ -211,7 +227,7 @@ GET /api/health/devices       public — per-device heartbeat + silent alert
 ## Development Notes
 
 - Start backend before frontend — frontend fetches on mount, fails silently if API down
-- `dotnet run` defaults to `https://localhost:7118` — match `VITE_API_URL`
-- Don't hand-edit `routeTree.gen.ts` — TanStack Router regenerates on save
-- First run: no Admin user exists. Seed one directly via SQL or add a bootstrap endpoint (remove after first use)
+- `dotnet run` defaults to `https://localhost:7114` — match `VITE_API_URL`
+- Don't hand-edit `routeTree.gen.ts` — TanStack Router regenerates on save (new routes need a dev-server run before `tsc` build passes)
+- First run: `SEED_DATA=true` creates Admin (`admin`/`admin123`). Change password before prod
 - `DeviceSilenceThresholdMinutes` in `appsettings.json` controls when a device is flagged silent (default: 5)

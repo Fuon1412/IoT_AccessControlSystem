@@ -13,19 +13,19 @@ Off: "stop caveman" / "normal mode".
 - **Backend .NET 8** — strong typing, EF Core migrations handle schema clean, Swagger auto-gen, no extra setup
 - **Frontend React 19 + TanStack Router** — file-based routing, no boilerplate, pair with Vite HMR
 - **ESP32** — Wi-Fi built-in, enough GPIO for RFID + OLED + buzzer, 3.3V logic match RC522
-- **MQTT (planned)** — replacing HTTP POST, bidirectional, auto-reconnect, lower latency
+- **MQTT (implemented)** — replaced HTTP POST, bidirectional, auto-reconnect, lower latency. ESP32 firmware publishes scan + subscribes response.
 
 ## Data Flow
 
 ```
-Current (REST):
-ESP32 (RFID scan) → POST /api/access-logs → EF Core → SQL Server → Frontend polls
-
-Planned (MQTT):
+Active (MQTT) — firmware AccessControl.ino:
 ESP32 scan → publish access/{deviceId}/scan → Mosquitto broker
 Broker → MqttService (BackgroundService) → DB write + publish access/{deviceId}/response
-ESP32 ← response (grant/deny) ← broker
-Frontend ← SignalR push from MqttService (no polling)
+ESP32 ← response {"access":bool,"name":"..."} ← broker
+  → GRANTED: OLED shows user name + short buzzer beep
+  → DENIED : OLED "DENIED!" + 3 alarm beeps
+Offline/timeout → ESP32 buffers scan in SPIFFS queue, flushes on reconnect
+Frontend ← SignalR push from MqttService (planned; currently REST poll)
 ```
 
 ## MQTT Architecture
@@ -66,19 +66,19 @@ devices/{deviceId}/command  # Backend → ESP32 commands (unlock, reboot)
 - No auth on API endpoints — anyone on network hit `/api/users`
 - No auth on MQTT broker — add username/password in mosquitto.conf for prod
 - RFID UID spoofable — physical security only, not cryptographic
-- SD card log + SQL Server log desync if Wi-Fi drop mid-write
-- ESP32 HTTP POST: no retry (current) — MQTT QoS 1 fixes this when implemented
-- MQTT message lost if broker down + ESP32 not buffering locally
+- SD card log + Postgres log desync if Wi-Fi drop mid-write
+- MQTT QoS 0 currently — ESP32 SPIFFS queue buffers on disconnect/timeout, flush on reconnect (mitigates loss)
+- MQTT message lost only if SPIFFS queue full (QUEUE_MAX=50, oldest dropped)
 
 ## Priorities When Resuming
 
-1. Swap HTTP POST → MQTT publish on ESP32 (PubSubClient)
+1. ~~Swap HTTP POST → MQTT publish on ESP32 (PubSubClient)~~ DONE — AccessControl.ino
 2. Add MqttService BackgroundService in .NET — subscribe `access/+/scan`
 3. Add JWT auth to backend REST endpoints
 4. Broker auth — mosquitto.conf username/password
 5. Dashboard: SignalR push from MqttService (drop polling)
 6. Admin UI: add/remove users without reflashing firmware
-7. ESP32 retry queue — store failed publishes in SPIFFS, flush on reconnect
+7. ~~ESP32 retry queue — store failed publishes in SPIFFS, flush on reconnect~~ DONE
 
 ## File Locations — Quick Reference
 
@@ -90,32 +90,40 @@ devices/{deviceId}/command  # Backend → ESP32 commands (unlock, reboot)
 | MQTT service | `backend/IoTAccessAPI/Services/MqttService.cs` |
 | Frontend routes | `frontend/app/src/routes/` |
 | CORS config | `backend/IoTAccessAPI/Program.cs` |
-| ESP32 firmware | `esp32_logic/` |
-| RFID card list | `esp32_logic/main.cpp` (hardcoded map) |
+| ESP32 firmware (Arduino IDE) | `esp32_logic/AccessControl.ino` |
+| Local reference sketch | `esp32_logic/RFID.ino` (hardcoded-UID local-only demo) |
+| Firmware config | top of `AccessControl.ino` (WiFi/MQTT/pins #define) |
+| User validation | backend (MQTT response) — not hardcoded in firmware |
 
 ## Dev Gotchas
 
-- Run broker → backend → frontend in order
+- Run postgres → broker → backend → frontend in order (Docker compose handles via healthchecks)
 - Run backend before frontend — frontend fetches on mount, fails silent if API down
-- `dotnet run` uses `https://localhost:7114`, not `http` — check `VITE_API_URL` in `.env`
-- TanStack Router gen route types on save — don't hand-edit `routeTree.gen.ts`
-- EF Core needs SQL Server by default — swap SQLite for local dev without SQL Server install
+- `dotnet run` uses `https://localhost:7114`, not `http` — check `VITE_API_URL` in frontend `.env`
+- TanStack Router gen route types on save — don't hand-edit `routeTree.gen.ts`. New routes need a dev-server run to regen before `tsc` build passes
+- EF Core uses Npgsql (Postgres). Migrations are Postgres-native — `dotnet ef migrations add` needs Npgsql restored
+- All API endpoints JWT-gated except `/api/auth/login` + `/api/health`. UI needs seeded Admin (SEED_DATA=true) to first login
 - Debug MQTT with **MQTT Explorer** (GUI) — connect to broker, watch all topics live
 
 ## ESP32 Pin Map
 
-| Module | Pin |
-|---|---|
-| RC522 SDA | GPIO 21 |
-| RC522 SCK | GPIO 18 |
-| RC522 MOSI | GPIO 23 |
-| RC522 MISO | GPIO 19 |
-| RC522 RST | GPIO 22 |
-| OLED SDA | GPIO 21 (shared I2C) |
-| OLED SCL | GPIO 22 (shared I2C) |
-| SD card CS | GPIO 5 |
-| Buzzer | GPIO 4 |
-| RC522 VCC | 3.3V only |
+Verified against `RFID.ino` real wiring. RC522 = SPI, OLED = I2C (separate buses).
+RC522 SS on GPIO 5; OLED on ESP32 default I2C 21/22 — no pin shared.
+
+| Module | Pin | Notes |
+|---|---|---|
+| RC522 SS (SDA) | GPIO 5 | SPI chip-select |
+| RC522 SCK | GPIO 18 | SPI default |
+| RC522 MOSI | GPIO 23 | SPI default |
+| RC522 MISO | GPIO 19 | SPI default |
+| RC522 RST | (driver-managed) | MFRC522v2 PinSimple |
+| RC522 VCC | 3.3V only | 5V kills module |
+| OLED SDA | GPIO 21 | I2C default |
+| OLED SCL | GPIO 22 | I2C default |
+| Buzzer | GPIO 32 | active buzzer, digitalWrite HIGH=on |
+
+**Libs**: RFID = `MFRC522v2` (driver-based, NOT miguelbalboa v1). OLED = **SH1106**
+(`Adafruit_SH110X`), NOT SSD1306. Buzzer active type — `digitalWrite`, not `tone()`.
 
 ## Project Overview
 IoT Access Control System. Modern access control platform built with:
@@ -139,7 +147,7 @@ IoT Access Control System. Modern access control platform built with:
 
 ### Backend (IoTAccessAPI)
 - **Framework**: ASP.NET Core 8
-- **Database**: Entity Framework Core + SQL Server
+- **Database**: Entity Framework Core + PostgreSQL (Npgsql)
 - **Key Features**:
   - RESTful API endpoints
   - CORS enabled for dev
@@ -171,10 +179,14 @@ GET  /api/access-logs    - List access logs
 GET  /swagger            - API documentation
 ```
 
-### Frontend Routes
+### Frontend Routes (JWT-gated, control-room UI)
 ```
-/                - Home page
-/dashboard       - Dashboard with system overview
+/login           - Operator login (JWT)
+/                - Overview: stats + live SignalR access feed
+/logs            - Access log archive (filter grant/deny)
+/devices         - Device registry + online/offline status
+/cards           - RFID credential registry (enroll/revoke)
+/users           - Operator identities (CRUD)
 ```
 
 ## Development Setup
@@ -182,34 +194,41 @@ GET  /swagger            - API documentation
 ### Prerequisites
 - .NET 8.0 SDK
 - Node.js 18+
-- SQL Server (or configure alternative DB)
-- Docker (for Mosquitto broker)
+- PostgreSQL 16 (or use Docker compose)
+- Docker (Mosquitto broker + Postgres)
 
-### Quick Start
+### Quick Start (Docker — full stack)
 ```bash
-# Terminal 1: Broker
+cp .env.example .env       # edit secrets
+docker compose up --build  # postgres + mosquitto + backend + frontend
+# → http://localhost  (login admin / admin123, change before prod)
+```
+
+### Quick Start (local dev, no Docker)
+```bash
+# Terminal 1: Postgres + Broker
+docker run -d --name pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=IoTAccessDb -p 5432:5432 postgres:16-alpine
 docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto
 
-# Terminal 2: Backend
-cd backend/IoTAccessAPI
-dotnet restore
-dotnet run
+# Terminal 2: Backend (auto-migrate + seed in Development)
+cd backend/IoTAccessAPI && dotnet restore && dotnet run
 
 # Terminal 3: Frontend
-cd frontend/app
-npm install
-npm run dev
+cd frontend/app && npm install && npm run dev
 ```
 
 ### Environment Variables
 
-**Backend** (.env or appsettings.Development.json):
+**Backend** (appsettings.Development.json or env):
 ```
 ASPNETCORE_ENVIRONMENT=Development
-ConnectionString=Server=.;Database=IoTAccessDb;Integrated Security=True;
-MQTT_HOST=localhost
-MQTT_PORT=1883
+ConnectionStrings__DefaultConnection=Host=localhost;Port=5432;Database=IoTAccessDb;Username=postgres;Password=postgres
+Mqtt__Host=localhost
+Mqtt__Port=1883
+SEED_DATA=true                 # seed users + device on startup (idempotent)
 ```
+
+**Compose** (.env — see .env.example): POSTGRES_*, JWT_SECRET, ADMIN_USERNAME/PASSWORD, MQTT_*
 
 **Frontend** (.env):
 ```

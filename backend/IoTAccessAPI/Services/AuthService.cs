@@ -33,6 +33,12 @@ public class AuthService : IAuthService
         return new LoginResponse(GenerateToken(user), DateTime.UtcNow.AddHours(8), user.Role);
     }
 
+    public async Task<bool> VerifyPasswordAsync(string username, string password)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Username == username && u.IsActive);
+        return user is not null && BCrypt.Net.BCrypt.Verify(password, user.PasswordHash);
+    }
+
     public async Task<UserDto?> RegisterAsync(RegisterRequest request)
     {
         if (await _db.Users.AnyAsync(u => u.Username == request.Username))
@@ -41,14 +47,15 @@ public class AuthService : IAuthService
         var user = new User
         {
             Username = request.Username,
+            FullName = request.Username,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
-            Role = request.Role ?? "User"
+            Role = request.Role ?? "Employee"
         };
 
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
 
-        return new UserDto(user.Id, user.Username, user.Role, user.IsActive, user.CreatedAt);
+        return new UserDto(user.Id, user.Username, user.FullName, user.Role, user.IsActive, user.CreatedAt);
     }
 
     private string GenerateToken(User user)

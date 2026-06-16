@@ -1,59 +1,98 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-@layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 3.6%;
-    --card: 0 0% 100%;
-    --card-foreground: 0 0% 3.6%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 3.6%;
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
-    --accent: 0 72.2% 50.6%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --primary: 0 0% 9%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
-    --ring: 0 0% 3.6%;
-    --radius: 0.5rem;
-  }
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-  .dark {
-    --background: 0 0% 3.6%;
-    --foreground: 0 0% 98.2%;
-    --card: 0 0% 8.5%;
-    --card-foreground: 0 0% 98.2%;
-    --popover: 0 0% 8.5%;
-    --popover-foreground: 0 0% 98.2%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 72.2% 50.6%;
-    --accent-foreground: 0 0% 9%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98.2%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --primary: 0 0% 98.2%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98.2%;
-    --ring: 0 0% 83.3%;
-  }
+/*
+  AESTHETIC: Clean light SaaS admin.
+  Neutral slate grays, single indigo accent, generous whitespace, soft cards.
+  Status colors: green=grant/online, red=deny/offline, amber=pending/unassigned.
+*/
+@theme {
+  --color-bg:        #f6f7f9;   /* app background */
+  --color-surface:   #ffffff;   /* cards/panels */
+  --color-surface-2: #f1f3f5;   /* subtle fills */
+  --color-line:      #e4e7eb;   /* borders */
+  --color-line-2:    #d3d8de;
+
+  --color-accent:    #4f46e5;   /* indigo */
+  --color-accent-d:  #4338ca;
+  --color-accent-so: #eef2ff;   /* soft accent bg */
+
+  --color-ok:        #16a34a;
+  --color-ok-so:     #ecfdf3;
+  --color-warn:      #d97706;
+  --color-warn-so:   #fffbeb;
+  --color-bad:       #dc2626;
+  --color-bad-so:    #fef2f2;
+  --color-info:      #0891b2;
+
+  --color-ink:       #111827;   /* primary text */
+  --color-ink-2:     #4b5563;   /* secondary */
+  --color-ink-3:     #9ca3af;   /* muted/labels */
+
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+}
+
+/* shadcn-compat tokens */
+@theme inline {
+  --color-background: var(--color-bg);
+  --color-foreground: var(--color-ink);
+  --color-card: var(--color-surface);
+  --color-border: var(--color-line);
+  --color-input: var(--color-line);
+  --color-primary: var(--color-accent);
+  --color-primary-foreground: #ffffff;
+  --color-muted: var(--color-surface-2);
+  --color-muted-foreground: var(--color-ink-3);
+  --color-destructive: var(--color-bad);
+  --color-ring: var(--color-accent);
 }
 
 @layer base {
-  * {
-    @apply border-border;
-  }
+  * { border-color: var(--color-line); box-sizing: border-box; }
+  html, body, #root { height: 100%; }
   body {
-    @apply bg-background text-foreground;
+    margin: 0;
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
+  ::selection { background: var(--color-accent-so); color: var(--color-accent-d); }
+
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--color-line-2); border: 3px solid var(--color-bg); border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-ink-3); }
 }
+
+@layer utilities {
+  .label {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--color-ink-3);
+  }
+  .card-shadow { box-shadow: 0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06); }
+  .card-shadow-lg { box-shadow: 0 4px 6px -1px rgba(16,24,40,0.06), 0 10px 15px -3px rgba(16,24,40,0.08); }
+}
+
+@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pulseRing {
+  0%   { box-shadow: 0 0 0 0 currentColor; opacity: 0.5; }
+  70%  { box-shadow: 0 0 0 6px transparent; opacity: 0; }
+  100% { box-shadow: 0 0 0 0 transparent; opacity: 0; }
+}
+@keyframes rowIn {
+  0%   { background-color: var(--color-accent-so); }
+  100% { background-color: transparent; }
+}
+.enter { animation: fadeUp 0.3s ease-out both; }
+.row-in { animation: rowIn 1.6s ease-out; }

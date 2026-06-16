@@ -3,7 +3,7 @@
 ## Project Info
 - **Type**: ASP.NET Core 8 Web API
 - **Language**: C#
-- **Database**: Entity Framework Core + SQL Server
+- **Database**: Entity Framework Core + PostgreSQL (Npgsql)
 - **Port**: https://localhost:7114
 
 ## Quick Commands

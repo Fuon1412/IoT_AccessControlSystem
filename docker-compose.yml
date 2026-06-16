@@ -1,23 +1,21 @@
 services:
 
-  sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+  postgres:
+    image: postgres:16-alpine
     environment:
-      SA_PASSWORD: "${SQL_SA_PASSWORD:-Dev@StrongPass123}"
-      ACCEPT_EULA: "Y"
+      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
+      POSTGRES_DB: "${POSTGRES_DB:-IoTAccessDb}"
     ports:
-      - "1433:1433"
+      - "5432:5432"
     volumes:
-      - sqlserver_data:/var/opt/mssql
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: >
-        /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA
-        -P "${SQL_SA_PASSWORD:-Dev@StrongPass123}"
-        -C -Q "SELECT 1" || exit 1
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-IoTAccessDb}"]
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 30s
+      start_period: 15s
 
   mosquitto:
     image: eclipse-mosquitto:2
@@ -41,24 +39,32 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__DefaultConnection: >-
-        Server=sqlserver;Database=IoTAccessDb;
-        User Id=SA;Password=${SQL_SA_PASSWORD:-Dev@StrongPass123};
-        TrustServerCertificate=True;
+        Host=postgres;Port=5432;Database=${POSTGRES_DB:-IoTAccessDb};
+        Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
       Jwt__Issuer: IoTAccessAPI
       Jwt__Audience: IoTAccessClient
       Jwt__Secret: "${JWT_SECRET:-change-this-in-production-minimum-32-chars!!}"
       DeviceSilenceThresholdMinutes: "5"
       AUTO_MIGRATE: "true"
-      Mqtt__Host: mosquitto
-      Mqtt__Port: "1883"
-      Mqtt__ClientId: iot-backend
+      SEED_DATA: "${SEED_DATA:-true}"
+      Seed__AdminUsername: "${ADMIN_USERNAME:-admin}"
+      Seed__AdminPassword: "${ADMIN_PASSWORD:-admin123}"
+      # Public broker by default (ESP32 + backend share it). Override for local mosquitto.
+      Mqtt__Host: "${MQTT_HOST:-broker.hivemq.com}"
+      Mqtt__Port: "${MQTT_PORT:-1883}"
+      Mqtt__ClientId: "${MQTT_CLIENT_ID:-iot-backend-7f3a}"
+      Mqtt__TopicPrefix: "${MQTT_TOPIC_PREFIX:-iot7f3a}"
       Mqtt__Username: "${MQTT_USERNAME:-}"
       Mqtt__Password: "${MQTT_PASSWORD:-}"
     depends_on:
-      sqlserver:
+      postgres:
         condition: service_healthy
-      mosquitto:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   frontend:
     build:
@@ -66,8 +72,9 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
-  sqlserver_data:
+  postgres_data:
   mosquitto_data:
