@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate, redirect } from '@tanstack/react-router'
 import { useState } from 'react'
+import { ShieldCheck } from 'lucide-react'
 import { api, ApiError } from '../lib/api'
 import { setAuth, getToken } from '../lib/auth'
 import { Button, Input } from '../components/ui'
@@ -37,10 +38,16 @@ function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg)] p-4">
-      <div className="enter w-full max-w-sm">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--color-bg)] p-4">
+      {/* soft accent glow backdrop */}
+      <div className="pointer-events-none absolute inset-0" style={{
+        background: 'radial-gradient(60rem 40rem at 50% -10%, var(--color-accent-so), transparent 70%)',
+      }} />
+      <div className="enter relative w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center text-center">
-          <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent)] text-lg font-bold text-white">A</div>
+          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent)] text-white card-shadow-lg">
+            <ShieldCheck className="h-6 w-6" />
+          </div>
           <h1 className="text-xl font-bold text-[var(--color-ink)]">AccessCtrl</h1>
           <p className="mt-1 text-sm text-[var(--color-ink-3)]">Sign in to the access control panel</p>
         </div>
@@ -68,6 +75,10 @@ function Login() {
               {busy ? 'Signing in…' : 'Sign in'}
             </Button>
           </form>
+
+          <div className="mt-4 rounded-[var(--radius-sm)] border border-dashed border-[var(--color-line-2)] bg-[var(--color-surface-2)] px-3 py-2 text-center text-xs text-[var(--color-ink-3)]">
+            Demo · <span className="font-mono text-[var(--color-ink-2)]">admin</span> / <span className="font-mono text-[var(--color-ink-2)]">admin123</span>
+          </div>
         </div>
       </div>
     </div>

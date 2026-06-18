@@ -9,7 +9,7 @@
 .classpath
 *.sublime-workspace
 *.sublime-project
-
+docs/
 # Build outputs
 bin/
 obj/

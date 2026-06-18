@@ -1,11 +1,13 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { useAccessFeed, useEventFeed } from '../lib/signalr'
-import { Panel, Table, Th, Td, StatusLED, Badge, Button, StateLine, Input, Select, type Signal } from '../components/ui'
+import { Panel, Table, Th, Td, StatusLED, Badge, Button, StateLine, Input, Select, SearchInput, TableSkeleton, type Signal } from '../components/ui'
 import { stamp } from '../lib/utils'
 import type { EventLogDto } from '../lib/types'
+
+const PAGE_SIZE = 25
 
 export const Route = createFileRoute('/logs')({ component: Logs })
 
@@ -41,6 +43,9 @@ function Logs() {
   const [userId, setUserId] = useState('all')   // 'all' | 'none' | <id>
   // Events-only
   const [evType, setEvType] = useState('all')    // 'all' | door | connectivity | emergency
+  // Free-text search + pagination
+  const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
 
   const logs = useQuery({ queryKey: ['logs'], queryFn: api.accessLogs, refetchInterval: 20_000 })
   const events = useQuery({ queryKey: ['events'], queryFn: api.eventLogs, refetchInterval: 20_000 })
@@ -54,24 +59,40 @@ function Logs() {
   useEventFeed(refetchEvents)
 
   const resetFilters = () => {
-    setDeviceId('all'); setFrom(''); setTo(''); setResult('all'); setUserId('all'); setEvType('all')
+    setDeviceId('all'); setFrom(''); setTo(''); setResult('all'); setUserId('all'); setEvType('all'); setQuery('')
   }
+
+  // Any filter/search/tab change → back to page 1.
+  useEffect(() => { setPage(1) }, [tab, deviceId, from, to, result, userId, evType, query])
+
+  const needle = query.trim().toLowerCase()
+  const matchAccess = (l: { rfidUid: string; deviceName: string; username: string | null; denyReason: string | null }) =>
+    !needle || [l.rfidUid, l.deviceName, l.username, l.denyReason].some((f) => f?.toLowerCase().includes(needle))
+  const matchEvent = (e: EventLogDto) =>
+    !needle || [e.detail, e.deviceName, e.actor, e.eventType].some((f) => f?.toLowerCase().includes(needle))
 
   const accessRows = (logs.data ?? []).filter((l) =>
     (result === 'all' || (result === 'grant' ? l.accessGranted : !l.accessGranted)) &&
     (deviceId === 'all' || l.deviceId === Number(deviceId)) &&
     (userId === 'all' || (userId === 'none' ? l.userId == null : l.userId === Number(userId))) &&
-    inRange(l.timestamp, from, to))
+    inRange(l.timestamp, from, to) && matchAccess(l))
 
   const eventRows = (events.data ?? []).filter((e) =>
     (evType === 'all' || e.eventType === evType) &&
     (deviceId === 'all' || e.deviceId === Number(deviceId)) &&
-    inRange(e.timestamp, from, to))
+    inRange(e.timestamp, from, to) && matchEvent(e))
 
   const isAccess = tab === 'access'
   const q = isAccess ? logs : events
   const shown = isAccess ? accessRows.length : eventRows.length
   const total = (isAccess ? logs.data?.length : events.data?.length) ?? 0
+
+  // Pagination — clamp page to valid range, slice the active list.
+  const pageCount = Math.max(1, Math.ceil(shown / PAGE_SIZE))
+  const safePage = Math.min(page, pageCount)
+  const start = (safePage - 1) * PAGE_SIZE
+  const pagedAccess = accessRows.slice(start, start + PAGE_SIZE)
+  const pagedEvents = eventRows.slice(start, start + PAGE_SIZE)
 
   const fld = 'flex flex-col gap-1'
   const lbl = 'text-xs font-medium text-[var(--color-ink-3)]'
@@ -150,13 +171,19 @@ function Logs() {
           <Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="w-40" />
         </div>
 
+        <div className={fld}>
+          <span className={lbl}>Search</span>
+          <SearchInput value={query} onChange={(e) => setQuery(e.target.value)}
+            placeholder={isAccess ? 'UID, holder, device…' : 'state, device, actor…'} className="w-56" />
+        </div>
+
         <Button variant="ghost" onClick={resetFilters}>Reset</Button>
       </div>
 
       {/* ─── States ─────────────────────────────────────────────── */}
-      {q.isLoading && <StateLine kind="loading" msg="Loading archive…" />}
+      {q.isLoading && <TableSkeleton rows={8} cols={isAccess ? 6 : 5} />}
       {q.isError && <StateLine kind="error" msg="Archive unreachable" />}
-      {q.data && shown === 0 && <StateLine kind="empty" msg="No matching records" />}
+      {q.data && shown === 0 && <StateLine kind="empty" msg={needle ? 'No records match your search' : 'No matching records'} />}
 
       {/* ─── Access table ───────────────────────────────────────── */}
       {isAccess && accessRows.length > 0 && (
@@ -165,7 +192,7 @@ function Logs() {
             <tr><Th>Result</Th><Th>Timestamp</Th><Th>Device</Th><Th>UID</Th><Th>Holder</Th><Th>Reason</Th></tr>
           </thead>
           <tbody>
-            {accessRows.map((l) => (
+            {pagedAccess.map((l) => (
               <tr key={l.id} className="hover:bg-[var(--color-surface-2)]">
                 <Td>
                   <span className="flex items-center gap-2">
@@ -191,7 +218,7 @@ function Logs() {
             <tr><Th>Event</Th><Th>State</Th><Th>Timestamp</Th><Th>Device</Th><Th>By</Th></tr>
           </thead>
           <tbody>
-            {eventRows.map((e) => {
+            {pagedEvents.map((e) => {
               const sig = evSignal[e.detail] ?? 'dim'
               return (
                 <tr key={e.id} className="hover:bg-[var(--color-surface-2)]">
@@ -210,6 +237,20 @@ function Logs() {
             })}
           </tbody>
         </Table>
+      )}
+
+      {/* ─── Pagination ─────────────────────────────────────────── */}
+      {shown > PAGE_SIZE && (
+        <div className="mt-4 flex items-center justify-between border-t border-[var(--color-line)] pt-3 text-sm">
+          <span className="text-[var(--color-ink-3)]">
+            {start + 1}–{Math.min(start + PAGE_SIZE, shown)} of {shown}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage <= 1}>Prev</Button>
+            <span className="tabular-nums text-[var(--color-ink-2)]">Page {safePage} / {pageCount}</span>
+            <Button onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={safePage >= pageCount}>Next</Button>
+          </div>
+        </div>
       )}
     </Panel>
   )

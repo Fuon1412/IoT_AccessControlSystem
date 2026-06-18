@@ -2,24 +2,30 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../lib/api'
-import { Panel, Table, Th, Td, StatusLED, Badge, Button, Select, StateLine } from '../components/ui'
+import type { RfidCardDto } from '../lib/types'
+import { Panel, Table, Th, Td, StatusLED, Badge, Button, Select, StateLine, ConfirmDialog } from '../components/ui'
+import { useToast } from '../components/toast'
 import { stamp } from '../lib/utils'
 
 export const Route = createFileRoute('/cards')({ component: Cards })
 
 function Cards() {
   const qc = useQueryClient()
+  const toast = useToast()
   const cards = useQuery({ queryKey: ['cards'], queryFn: api.cards, refetchInterval: 15_000 })
   const users = useQuery({ queryKey: ['users'], queryFn: api.users })
   const [assignTo, setAssignTo] = useState<Record<number, number>>({})
+  const [pendingRevoke, setPendingRevoke] = useState<RfidCardDto | null>(null)
 
   const assign = useMutation({
     mutationFn: ({ cardId, userId }: { cardId: number; userId: number }) => api.assignCard(cardId, userId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cards'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cards'] }); toast.success('Card assigned') },
+    onError: (e: Error) => toast.error(e.message),
   })
   const deactivate = useMutation({
     mutationFn: (id: number) => api.deactivateCard(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cards'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cards'] }); setPendingRevoke(null); toast.success('Card revoked') },
+    onError: (e: Error) => { setPendingRevoke(null); toast.error(e.message) },
   })
 
   const list = cards.data ?? []
@@ -27,6 +33,7 @@ function Cards() {
   const assigned = list.filter((c) => c.isAssigned)
 
   return (
+   <>
     <div className="space-y-6">
       {/* ─── Unassigned (needs admin action) ─────────────────────── */}
       <Panel
@@ -94,7 +101,7 @@ function Cards() {
                         {c.isActive ? 'Reassign' : 'Reassign & activate'}
                       </Button>
                       {c.isActive && (
-                        <Button variant="danger" onClick={() => { if (confirm(`Revoke card ${c.uid}?`)) deactivate.mutate(c.id) }}>
+                        <Button variant="danger" onClick={() => setPendingRevoke(c)}>
                           Revoke
                         </Button>
                       )}
@@ -107,5 +114,16 @@ function Cards() {
         )}
       </Panel>
     </div>
+
+    <ConfirmDialog
+      open={pendingRevoke !== null}
+      title="Revoke card"
+      message={<>Revoke card <b className="font-mono">{pendingRevoke?.uid}</b>? The holder loses access immediately.</>}
+      confirmLabel="Revoke"
+      busy={deactivate.isPending}
+      onConfirm={() => pendingRevoke && deactivate.mutate(pendingRevoke.id)}
+      onCancel={() => setPendingRevoke(null)}
+    />
+   </>
   )
 }

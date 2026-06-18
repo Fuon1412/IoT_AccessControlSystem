@@ -4,7 +4,8 @@ import { useCallback, useState } from 'react'
 import { api } from '../lib/api'
 import type { DeviceDto, DoorState, DoorStateEvent } from '../lib/types'
 import { useDoorFeed } from '../lib/signalr'
-import { Panel, Table, Th, Td, StatusLED, Badge, Button, Input, StateLine, type Signal } from '../components/ui'
+import { Panel, Table, Th, Td, StatusLED, Badge, Button, Input, StateLine, ConfirmDialog, type Signal } from '../components/ui'
+import { useToast } from '../components/toast'
 import { timeAgo } from '../lib/utils'
 
 export const Route = createFileRoute('/devices')({ component: Devices })
@@ -26,17 +27,28 @@ function doorSignal(state: DoorState): { sig: Signal; label: string; pulse: bool
 
 function Devices() {
   const qc = useQueryClient()
+  const toast = useToast()
   const { data, isLoading, isError } = useQuery({ queryKey: ['devices'], queryFn: api.devices, refetchInterval: 15_000 })
   const [form, setForm] = useState({ name: '', macAddress: '', location: '' })
   const [open, setOpen] = useState(false)
+  const [pendingDel, setPendingDel] = useState<DeviceDto | null>(null)
 
   const create = useMutation({
     mutationFn: () => api.createDevice(form),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['devices'] }); setForm({ name: '', macAddress: '', location: '' }); setOpen(false) },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['devices'] })
+      setForm({ name: '', macAddress: '', location: '' }); setOpen(false)
+      toast.success('Device registered')
+    },
+    onError: (e: Error) => toast.error(e.message),
   })
   const del = useMutation({
     mutationFn: (id: number) => api.deleteDevice(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['devices'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['devices'] }); setPendingDel(null)
+      toast.success('Device decommissioned')
+    },
+    onError: (e: Error) => { setPendingDel(null); toast.error(e.message) },
   })
 
   // Live door state — patch the cached device list as servo events arrive.
@@ -49,6 +61,7 @@ function Devices() {
   useDoorFeed(onDoor)
 
   return (
+   <>
     <Panel
       title="Device Registry"
       subtitle="RFID terminals — device name must match firmware DEVICE_ID"
@@ -90,7 +103,7 @@ function Devices() {
                   <Td className="text-[var(--color-ink-3)]">{timeAgo(d.lastHeartbeat)}</Td>
                   <Td className="text-right">
                     {d.isActive
-                      ? <Button variant="danger" onClick={() => { if (confirm(`Decommission ${d.name}?`)) del.mutate(d.id) }}>Remove</Button>
+                      ? <Button variant="danger" onClick={() => setPendingDel(d)}>Remove</Button>
                       : <Badge signal="dim">Retired</Badge>}
                   </Td>
                 </tr>
@@ -100,5 +113,16 @@ function Devices() {
         </Table>
       )}
     </Panel>
+
+    <ConfirmDialog
+      open={pendingDel !== null}
+      title="Decommission device"
+      message={<>Remove <b>{pendingDel?.name}</b> from the registry? Its access history is kept.</>}
+      confirmLabel="Decommission"
+      busy={del.isPending}
+      onConfirm={() => pendingDel && del.mutate(pendingDel.id)}
+      onCancel={() => setPendingDel(null)}
+    />
+   </>
   )
 }

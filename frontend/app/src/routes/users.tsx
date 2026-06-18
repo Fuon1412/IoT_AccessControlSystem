@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../lib/api'
 import type { UserDto } from '../lib/types'
-import { Panel, Table, Th, Td, StatusLED, Badge, Button, Input, Select, StateLine, type Signal } from '../components/ui'
+import { Panel, Table, Th, Td, StatusLED, Badge, Button, Input, Select, StateLine, ConfirmDialog, type Signal } from '../components/ui'
+import { useToast } from '../components/toast'
 import { stamp } from '../lib/utils'
 
 export const Route = createFileRoute('/users')({ component: Users })
@@ -19,11 +20,13 @@ function roleSignal(role: string): Signal {
 
 function Users() {
   const qc = useQueryClient()
+  const toast = useToast()
   const { data, isLoading, isError } = useQuery({ queryKey: ['users'], queryFn: api.users })
   const [form, setForm] = useState({ username: '', fullName: '', password: '', role: 'Employee', rfidUid: '' })
   const [open, setOpen] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [pwId, setPwId] = useState<number | null>(null)
+  const [pendingDel, setPendingDel] = useState<UserDto | null>(null)
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['users'] })
@@ -38,15 +41,25 @@ function Users() {
       }
       return form.role === 'Employee' ? api.createEmployee(body) : api.createUser(body)
     },
-    onSuccess: () => { invalidate(); setForm({ username: '', fullName: '', password: '', role: 'Employee', rfidUid: '' }); setOpen(false) },
+    onSuccess: () => {
+      invalidate(); setForm({ username: '', fullName: '', password: '', role: 'Employee', rfidUid: '' }); setOpen(false)
+      toast.success('Account created')
+    },
+    onError: (e: Error) => toast.error(e.message),
   })
-  const del = useMutation({ mutationFn: (id: number) => api.deleteUser(id), onSuccess: invalidate })
+  const del = useMutation({
+    mutationFn: (id: number) => api.deleteUser(id),
+    onSuccess: () => { invalidate(); setPendingDel(null); toast.success('Account deleted') },
+    onError: (e: Error) => { setPendingDel(null); toast.error(e.message) },
+  })
   const toggle = useMutation({
     mutationFn: ({ id, isActive }: { id: number; isActive: boolean }) => api.updateUser(id, { isActive }),
-    onSuccess: invalidate,
+    onSuccess: (u) => { invalidate(); toast.success(u.isActive ? 'Account enabled' : 'Account disabled') },
+    onError: (e: Error) => toast.error(e.message),
   })
 
   return (
+   <>
     <div className="space-y-6">
       <Panel
         title="Users & Employees"
@@ -82,13 +95,24 @@ function Users() {
                   pwOpen={pwId === u.id} onPw={() => { setPwId(pwId === u.id ? null : u.id); setEditId(null) }}
                   onSaved={() => { setEditId(null); setPwId(null) }}
                   onToggle={() => toggle.mutate({ id: u.id, isActive: !u.isActive })}
-                  onDelete={() => { if (confirm(`Delete ${u.username}?`)) del.mutate(u.id) }} />
+                  onDelete={() => setPendingDel(u)} />
               ))}
             </tbody>
           </Table>
         )}
       </Panel>
     </div>
+
+    <ConfirmDialog
+      open={pendingDel !== null}
+      title="Delete account"
+      message={<>Delete <b>{pendingDel?.username}</b>? This permanently removes the account.</>}
+      confirmLabel="Delete"
+      busy={del.isPending}
+      onConfirm={() => pendingDel && del.mutate(pendingDel.id)}
+      onCancel={() => setPendingDel(null)}
+    />
+   </>
   )
 }
 

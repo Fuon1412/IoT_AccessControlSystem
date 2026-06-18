@@ -53,9 +53,42 @@
   --color-ring: var(--color-accent);
 }
 
+/*
+  DARK THEME — overrides the raw CSS custom properties under [data-theme="dark"].
+  Every component reads var(--color-*) directly, so re-pointing the vars flips the
+  whole UI. Slate-950 base, lifted surfaces, same indigo accent (brightened a touch).
+*/
+[data-theme="dark"] {
+  --color-bg:        #0b0f17;
+  --color-surface:   #131926;
+  --color-surface-2: #1b2335;
+  --color-line:      #232c3f;
+  --color-line-2:    #313c54;
+
+  --color-accent:    #6366f1;
+  --color-accent-d:  #818cf8;
+  --color-accent-so: #1e253b;
+
+  --color-ok:        #22c55e;
+  --color-ok-so:     #0e2a1c;
+  --color-warn:      #f59e0b;
+  --color-warn-so:   #2c2410;
+  --color-bad:       #f87171;
+  --color-bad-so:    #2c1717;
+  --color-info:      #22d3ee;
+
+  --color-ink:       #e8ecf3;
+  --color-ink-2:     #aab3c4;
+  --color-ink-3:     #6b7588;
+
+  color-scheme: dark;
+}
+
 @layer base {
   * { border-color: var(--color-line); box-sizing: border-box; }
+  html { color-scheme: light; }
   html, body, #root { height: 100%; }
+  html, body { transition: background-color 0.2s ease, color 0.2s ease; }
   body {
     margin: 0;
     background-color: var(--color-bg);
@@ -96,3 +129,17 @@
 }
 .enter { animation: fadeUp 0.3s ease-out both; }
 .row-in { animation: rowIn 1.6s ease-out; }
+
+/* toast / modal / skeleton */
+@keyframes toastIn { from { opacity: 0; transform: translateX(16px) scale(0.98); } to { opacity: 1; transform: translateX(0) scale(1); } }
+@keyframes modalIn { from { opacity: 0; transform: translateY(8px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.toast-in { animation: toastIn 0.22s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.modal-in { animation: modalIn 0.18s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.modal-overlay { animation: overlayIn 0.18s ease-out both; }
+.skeleton {
+  background: linear-gradient(90deg, var(--color-surface-2) 25%, var(--color-line) 50%, var(--color-surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}

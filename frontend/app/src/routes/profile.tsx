@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { Panel, Input, Button, Badge, StateLine, type Signal } from '../components/ui'
+import { useToast } from '../components/toast'
 
 export const Route = createFileRoute('/profile')({ component: Profile })
 
@@ -15,6 +16,7 @@ function roleSignal(role: string): Signal {
 
 function Profile() {
   const qc = useQueryClient()
+  const toast = useToast()
   const me = useQuery({ queryKey: ['me-profile'], queryFn: api.me })
   const [fullName, setFullName] = useState('')
 
@@ -22,14 +24,16 @@ function Profile() {
 
   const saveProfile = useMutation({
     mutationFn: () => api.updateMe(fullName),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['me-profile'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['me-profile'] }); toast.success('Profile saved') },
+    onError: (e: Error) => toast.error(e.message),
   })
 
   const [cur, setCur] = useState('')
   const [next, setNext] = useState('')
   const changePw = useMutation({
     mutationFn: () => api.changePassword(cur, next),
-    onSuccess: () => { setCur(''); setNext('') },
+    onSuccess: () => { setCur(''); setNext(''); toast.success('Password changed') },
+    onError: (e: Error) => toast.error(e.message),
   })
 
   return (

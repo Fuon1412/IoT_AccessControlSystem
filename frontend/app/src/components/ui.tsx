@@ -1,5 +1,6 @@
 // Light SaaS UI primitives. Soft cards, neutral grays, indigo accent.
-import { type ReactNode, type ButtonHTMLAttributes, type InputHTMLAttributes } from 'react'
+import { useEffect, type ReactNode, type ButtonHTMLAttributes, type InputHTMLAttributes } from 'react'
+import { Search, X, AlertTriangle } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 export type Signal = 'green' | 'amber' | 'red' | 'cyan' | 'dim'
@@ -167,5 +168,95 @@ export function StateLine({ kind, msg }: { kind: 'loading' | 'empty' | 'error'; 
       <StatusLED signal={sig} pulse={kind === 'loading'} />
       <span>{msg}</span>
     </div>
+  )
+}
+
+// ─── Search input (icon-prefixed) ────────────────────────────────────────────────
+export function SearchInput({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <div className={cn('relative', className)}>
+      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-ink-3)]" />
+      <input
+        {...rest}
+        className="w-full rounded-[var(--radius-sm)] border border-[var(--color-line-2)] bg-[var(--color-surface)] py-2 pl-9 pr-3 text-sm text-[var(--color-ink)] outline-none transition-shadow placeholder:text-[var(--color-ink-3)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-so)]"
+      />
+    </div>
+  )
+}
+
+// ─── Skeleton (loading placeholder) ──────────────────────────────────────────────
+export function Skeleton({ className }: { className?: string }) {
+  return <div className={cn('skeleton rounded-[var(--radius-sm)]', className)} />
+}
+
+export function TableSkeleton({ rows = 5, cols = 4 }: { rows?: number; cols?: number }) {
+  return (
+    <div className="space-y-2 py-2">
+      {Array.from({ length: rows }).map((_, r) => (
+        <div key={r} className="flex gap-3">
+          {Array.from({ length: cols }).map((_, c) => (
+            <Skeleton key={c} className={cn('h-5 flex-1', c === 0 && 'max-w-[7rem]')} />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── Modal ───────────────────────────────────────────────────────────────────────
+export function Modal({
+  open, onClose, title, children, footer,
+}: { open: boolean; onClose: () => void; title?: string; children: ReactNode; footer?: ReactNode }) {
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+      <div className="modal-overlay absolute inset-0 bg-black/40" onClick={onClose} />
+      <div role="dialog" aria-modal="true"
+        className="modal-in relative w-full max-w-md rounded-[var(--radius-lg)] border border-[var(--color-line)] bg-[var(--color-surface)] card-shadow-lg">
+        {title && (
+          <div className="flex items-center justify-between border-b border-[var(--color-line)] px-5 py-4">
+            <h2 className="text-base font-semibold text-[var(--color-ink)]">{title}</h2>
+            <button onClick={onClose} aria-label="Close"
+              className="text-[var(--color-ink-3)] transition-colors hover:text-[var(--color-ink)]">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+        <div className="px-5 py-4 text-sm text-[var(--color-ink-2)]">{children}</div>
+        {footer && <div className="flex justify-end gap-2 border-t border-[var(--color-line)] px-5 py-4">{footer}</div>}
+      </div>
+    </div>
+  )
+}
+
+// ─── Confirm dialog ────────────────────────────────────────────────────────────────
+export function ConfirmDialog({
+  open, onConfirm, onCancel, title = 'Are you sure?', message, confirmLabel = 'Confirm', danger = true, busy = false,
+}: {
+  open: boolean; onConfirm: () => void; onCancel: () => void
+  title?: string; message: ReactNode; confirmLabel?: string; danger?: boolean; busy?: boolean
+}) {
+  return (
+    <Modal open={open} onClose={onCancel} title={title}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button variant={danger ? 'danger' : 'primary'} onClick={onConfirm} disabled={busy}>
+            {busy ? 'Working…' : confirmLabel}
+          </Button>
+        </>
+      }>
+      <div className="flex items-start gap-3">
+        {danger && <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--color-bad)]" />}
+        <div>{message}</div>
+      </div>
+    </Modal>
   )
 }

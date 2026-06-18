@@ -3,10 +3,12 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../lib/api'
 import { Panel, Select, Input, Button, StatusLED, StateLine } from '../components/ui'
+import { useToast } from '../components/toast'
 
 export const Route = createFileRoute('/emergency')({ component: Emergency })
 
 function Emergency() {
+  const toast = useToast()
   const devices = useQuery({ queryKey: ['devices'], queryFn: api.devices })
   const [deviceId, setDeviceId] = useState(0)
   const [action, setAction] = useState<'lock' | 'unlock'>('lock')
@@ -14,7 +16,8 @@ function Emergency() {
 
   const send = useMutation({
     mutationFn: () => api.emergency(deviceId, action, password),
-    onSuccess: () => setPassword(''),
+    onSuccess: (r) => { setPassword(''); toast.success(`${r.action.toUpperCase()} command sent to ${r.device}`) },
+    onError: (e: Error) => toast.error(e.message),
   })
 
   return (

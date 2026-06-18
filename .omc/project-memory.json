@@ -1,0 +1,392 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1781793408093,
+  "projectRoot": "/Users/nguyenbinhan/Workspace/Bài Tập Lớn/IoT_AccessControlSystem",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "backend": {
+      "path": "backend",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1781793408070,
+      "keyFiles": []
+    },
+    "esp32_logic": {
+      "path": "esp32_logic",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1781793408071,
+      "keyFiles": [
+        "RFID.ino"
+      ]
+    },
+    "frontend": {
+      "path": "frontend",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1781793408082,
+      "keyFiles": []
+    },
+    "mosquitto": {
+      "path": "mosquitto",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1781793408083,
+      "keyFiles": [
+        "mosquitto.conf",
+        "mosquitto.prod.conf"
+      ]
+    },
+    "frontend/app": {
+      "path": "frontend/app",
+      "purpose": "Application code",
+      "fileCount": 15,
+      "lastAccessed": 1781793408090,
+      "keyFiles": [
+        "CLAUDE.md",
+        "Dockerfile",
+        "README.md"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "docker-compose.yml",
+      "accessCount": 2,
+      "lastAccessed": 1781794400163,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/package.json",
+      "accessCount": 2,
+      "lastAccessed": 1781794574462,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Program.cs",
+      "accessCount": 2,
+      "lastAccessed": 1781795672256,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Services/MqttService.cs",
+      "accessCount": 2,
+      "lastAccessed": 1781795673173,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Data/AppDbContext.cs",
+      "accessCount": 2,
+      "lastAccessed": 1781795674272,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Services/DeviceMonitorService.cs",
+      "accessCount": 2,
+      "lastAccessed": 1781795674660,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Services/AuthService.cs",
+      "accessCount": 2,
+      "lastAccessed": 1781795675231,
+      "type": "file"
+    },
+    {
+      "path": ".env.example",
+      "accessCount": 1,
+      "lastAccessed": 1781793459905,
+      "type": "file"
+    },
+    {
+      "path": ".env",
+      "accessCount": 1,
+      "lastAccessed": 1781793748246,
+      "type": "file"
+    },
+    {
+      "path": "mosquitto/mosquitto.conf",
+      "accessCount": 1,
+      "lastAccessed": 1781793753877,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Models/User.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794535025,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Models/Device.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794535052,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Models/RfidCard.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794535140,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Models/AccessLog.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794535252,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Models/EventLog.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794537803,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Data/DbSeeder.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794538848,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/vite.config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1781794542154,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Services/DeviceService.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794544068,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Services/RfidCardService.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794544275,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Services/AccessLogService.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794544478,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Services/EventLogService.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794544539,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Controllers/AuthController.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794548681,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Controllers/UsersController.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794549125,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Controllers/CardsController.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794549677,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Controllers/DevicesController.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794549745,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Controllers/AccessLogsController.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794549944,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/src/App.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1781794553926,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Controllers/EventLogsController.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794554229,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/src/main.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1781794554376,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Controllers/HealthController.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794554705,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/src/lib/api.ts",
+      "accessCount": 1,
+      "lastAccessed": 1781794554932,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Hubs/AccessHub.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794555183,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/src/lib/auth.ts",
+      "accessCount": 1,
+      "lastAccessed": 1781794555220,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/src/lib/signalr.ts",
+      "accessCount": 1,
+      "lastAccessed": 1781794555320,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/Services/UserService.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794555393,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/src/lib/types.ts",
+      "accessCount": 1,
+      "lastAccessed": 1781794555420,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/src/routes/__root.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1781794558278,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/src/routes/index.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1781794558695,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/src/routes/login.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1781794558995,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/src/routes/devices.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1781794559139,
+      "type": "file"
+    },
+    {
+      "path": "esp32_logic/AccessControl/AccessControl.ino",
+      "accessCount": 1,
+      "lastAccessed": 1781794559524,
+      "type": "file"
+    },
+    {
+      "path": "esp32_logic/RFID.ino",
+      "accessCount": 1,
+      "lastAccessed": 1781794559711,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/DTOs/Auth/LoginRequest.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794562593,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/src/routes/logs.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1781794563532,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/DTOs/Auth/LoginResponse.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794563673,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/DTOs/Users/UserDto.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794564291,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/src/routes/emergency.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1781794564443,
+      "type": "file"
+    },
+    {
+      "path": "frontend/app/Dockerfile",
+      "accessCount": 1,
+      "lastAccessed": 1781794564572,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/DTOs/Devices/DeviceDto.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794564609,
+      "type": "file"
+    },
+    {
+      "path": "backend/IoTAccessAPI/DTOs/AccessLogs/AccessLogDto.cs",
+      "accessCount": 1,
+      "lastAccessed": 1781794564669,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
