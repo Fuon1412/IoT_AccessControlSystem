@@ -3,6 +3,7 @@ using System;
 using IoTAccessAPI.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace IoTAccessAPI.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260617154919_AddDeviceDoorState")]
+    partial class AddDeviceDoorState
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -111,40 +114,6 @@ namespace IoTAccessAPI.Migrations
                     b.ToTable("Devices");
                 });
 
-            modelBuilder.Entity("IoTAccessAPI.Models.EventLog", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Actor")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Detail")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("DeviceId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("EventType")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("Timestamp")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Timestamp");
-
-                    b.HasIndex("DeviceId", "EventType");
-
-                    b.ToTable("EventLogs");
-                });
-
             modelBuilder.Entity("IoTAccessAPI.Models.RfidCard", b =>
                 {
                     b.Property<int>("Id")
@@ -235,17 +204,6 @@ namespace IoTAccessAPI.Migrations
                     b.Navigation("Device");
 
                     b.Navigation("User");
-                });
-
-            modelBuilder.Entity("IoTAccessAPI.Models.EventLog", b =>
-                {
-                    b.HasOne("IoTAccessAPI.Models.Device", "Device")
-                        .WithMany()
-                        .HasForeignKey("DeviceId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Device");
                 });
 
             modelBuilder.Entity("IoTAccessAPI.Models.RfidCard", b =>

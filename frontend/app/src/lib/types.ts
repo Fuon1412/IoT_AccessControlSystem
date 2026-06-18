@@ -6,6 +6,8 @@ export interface LoginResponse {
   role: string
 }
 
+export type DoorState = 'open' | 'closed' | 'unknown'
+
 export interface DeviceDto {
   id: number
   name: string
@@ -13,7 +15,17 @@ export interface DeviceDto {
   location: string
   isActive: boolean
   lastHeartbeat: string | null
+  doorState: DoorState
+  lastDoorStateChange: string | null
   createdAt: string
+}
+
+// SignalR "DoorStateChanged" payload — servo open/close event from firmware.
+export interface DoorStateEvent {
+  deviceId: number
+  deviceName: string
+  doorState: 'open' | 'closed'
+  timestamp: string
 }
 
 export interface DeviceStatusDto {
@@ -35,6 +47,18 @@ export interface AccessLogDto {
   deviceName: string
   userId: number | null
   username: string | null
+}
+
+export type EventType = 'door' | 'connectivity' | 'emergency'
+
+export interface EventLogDto {
+  id: number
+  eventType: string   // door | connectivity | emergency
+  detail: string      // open|closed · online|offline · lock|unlock
+  actor: string | null
+  timestamp: string
+  deviceId: number
+  deviceName: string
 }
 
 export interface UserDto {

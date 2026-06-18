@@ -20,10 +20,14 @@ public class MqttService : IHostedService, IMqttService
     private IMqttClient _client = null!;
     private MqttClientOptions _options = null!;
     private CancellationTokenSource _cts = new();
+    private string _endpoint = "";   // for logging — ws uri or host:port
 
-    // Topic prefix — shared public broker requires a unique namespace.
-    // Must match firmware TOPIC_PREFIX. Config: Mqtt:TopicPrefix (default iot7f3a).
-    private string _prefix = "iot7f3a";
+    // Optional topic prefix. Private HiveMQ cluster needs none — left empty.
+    // Set Mqtt:TopicPrefix only if sharing a broker namespace. Must match firmware.
+    private string _prefix = "";
+
+    // Prepend prefix only when set → "iot7f3a/access/..." or plain "access/...".
+    private string Topic(string rest) => string.IsNullOrEmpty(_prefix) ? rest : $"{_prefix}/{rest}";
 
     public bool IsConnected => _client?.IsConnected ?? false;
 
@@ -43,17 +47,44 @@ public class MqttService : IHostedService, IMqttService
 
     public Task StartAsync(CancellationToken ct)
     {
-        var host = _config["Mqtt:Host"] ?? "localhost";
-        var port = _config.GetValue<int>("Mqtt:Port", 1883);
-        _prefix = (_config["Mqtt:TopicPrefix"] ?? "iot7f3a").TrimEnd('/');
+        _prefix = (_config["Mqtt:TopicPrefix"] ?? "").Trim().TrimEnd('/');
         var clientId = _config["Mqtt:ClientId"] ?? "iot-backend";
         var username = _config["Mqtt:Username"];
         var password = _config["Mqtt:Password"];
+        var transport = _config["Mqtt:Transport"] ?? "tcp";   // "websocket" | "tcp"
+        var useTls = _config.GetValue("Mqtt:UseTls", false);
 
         var optionsBuilder = new MqttClientOptionsBuilder()
-            .WithTcpServer(host, port)
             .WithClientId(clientId)
             .WithCleanSession();
+
+        // TLS SNI target — HiveMQ Cloud (multi-tenant) routes by SNI; missing it
+        // = LB drops the handshake ("unexpected EOF"). Set explicitly from host/uri.
+        string tlsHost;
+
+        // Transport — secure broker is WebSocket-Secure (wss). TCP kept for local dev.
+        if (string.Equals(transport, "websocket", StringComparison.OrdinalIgnoreCase))
+        {
+            var wsUri = _config["Mqtt:WebSocketUri"]
+                ?? throw new InvalidOperationException("Mqtt:WebSocketUri required when Mqtt:Transport=websocket");
+            optionsBuilder.WithWebSocketServer(o => o.WithUri(wsUri));
+            _endpoint = (useTls ? "wss://" : "ws://") + wsUri;
+            tlsHost = wsUri.Split('/')[0].Split(':')[0];   // strip port + path
+        }
+        else
+        {
+            var host = _config["Mqtt:Host"] ?? "localhost";
+            var port = _config.GetValue<int>("Mqtt:Port", 1883);
+            optionsBuilder.WithTcpServer(host, port);
+            _endpoint = $"{host}:{port}";
+            tlsHost = host;
+        }
+
+        if (useTls)
+            optionsBuilder.WithTlsOptions(o => o
+                .UseTls()
+                .WithTargetHost(tlsHost)
+                .WithSslProtocols(System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls13));
 
         if (!string.IsNullOrEmpty(username))
             optionsBuilder.WithCredentials(username, password);
@@ -97,45 +128,57 @@ public class MqttService : IHostedService, IMqttService
     }
 
     public Task PublishCommandAsync(string deviceName, string payload, CancellationToken ct = default)
-        => PublishAsync($"{_prefix}/devices/{deviceName}/command", payload, ct);
+        => PublishAsync(Topic($"devices/{deviceName}/command"), payload, ct);
 
     // ── Connect + subscribe ──────────────────────────────────────────────────
 
+    // Guard against overlapping reconnect loops — both startup and the disconnect
+    // handler call this; without it MQTTnet throws "connect while pending".
+    private int _connecting;
+
     private async Task ConnectWithRetryAsync(CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested)
+        if (Interlocked.Exchange(ref _connecting, 1) == 1) return;
+        try
         {
-            try
+            while (!ct.IsCancellationRequested)
             {
-                await _client.ConnectAsync(_options, ct);
-                _logger.LogInformation("MQTT connected to {Host}:{Port}",
-                    _config["Mqtt:Host"], _config["Mqtt:Port"]);
+                try
+                {
+                    if (_client.IsConnected) break;
+                    await _client.ConnectAsync(_options, ct);
+                    _logger.LogInformation("MQTT connected to {Endpoint}", _endpoint);
 
-                await SubscribeAsync(ct);
-                break;
+                    await SubscribeAsync(ct);
+                    break;
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("MQTT connect failed: {Message}. Retry in 5s", ex.Message);
+                    await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                }
             }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("MQTT connect failed: {Message}. Retry in 5s", ex.Message);
-                await Task.Delay(TimeSpan.FromSeconds(5), ct);
-            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _connecting, 0);
         }
     }
 
     private async Task SubscribeAsync(CancellationToken ct)
     {
         await _client.SubscribeAsync(new MqttTopicFilterBuilder()
-            .WithTopic($"{_prefix}/access/+/scan")
+            .WithTopic(Topic("access/+/scan"))
             .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
             .Build(), ct);
 
         await _client.SubscribeAsync(new MqttTopicFilterBuilder()
-            .WithTopic($"{_prefix}/access/+/status")
+            .WithTopic(Topic("access/+/status"))
             .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce)
             .Build(), ct);
 
-        _logger.LogInformation("MQTT subscribed: {Prefix}/access/+/scan, {Prefix}/access/+/status", _prefix, _prefix);
+        _logger.LogInformation("MQTT subscribed: {Scan}, {Status}", Topic("access/+/scan"), Topic("access/+/status"));
     }
 
     private async Task OnDisconnectedAsync(MqttClientDisconnectedEventArgs args)
@@ -159,18 +202,24 @@ public class MqttService : IHostedService, IMqttService
 
         try
         {
-            // Topic: {prefix}/access/{device}/{verb}
+            // Topic: [{prefix}/]access/{device}/{verb}
             var segments = topic.Split('/');
-            if (segments.Length != 4) return;
-            if (segments[0] != _prefix || segments[1] != "access") return;
+            var i = 0;
+            if (!string.IsNullOrEmpty(_prefix))
+            {
+                if (segments.Length < 1 || segments[0] != _prefix) return;
+                i = 1;   // skip prefix segment
+            }
+            if (segments.Length != i + 3) return;
+            if (segments[i] != "access") return;
 
-            var deviceTopic = segments[2];
-            var verb = segments[3];
+            var deviceTopic = segments[i + 1];
+            var verb = segments[i + 2];
 
             if (verb == "scan")
                 await HandleScanAsync(deviceTopic, payload);
             else if (verb == "status")
-                await HandleHeartbeatAsync(deviceTopic);
+                await HandleStatusAsync(deviceTopic, payload);
         }
         catch (Exception ex)
         {
@@ -231,10 +280,37 @@ public class MqttService : IHostedService, IMqttService
             name = validation.DisplayName ?? validation.Username ?? string.Empty
         });
 
-        await PublishAsync($"{_prefix}/access/{deviceTopic}/response", response);
+        await PublishAsync(Topic($"access/{deviceTopic}/response"), response);
 
         _logger.LogInformation("Scan uid={Uid} device={Device} granted={Granted} user={User}",
             uid, deviceName, validation.IsValid, validation.Username ?? "-");
+    }
+
+    // ── Status handler ───────────────────────────────────────────────────────
+    // Two payload shapes share the status topic:
+    //   "online"                                     → heartbeat (plain string)
+    //   {"device":"...","door":"open"|"closed"}      → door actuator state
+    private async Task HandleStatusAsync(string deviceTopic, string payload)
+    {
+        var trimmed = payload.TrimStart();
+        if (trimmed.StartsWith('{'))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(payload);
+                if (doc.RootElement.TryGetProperty("door", out var doorEl))
+                {
+                    await HandleDoorStateAsync(deviceTopic, doorEl.GetString());
+                    return;
+                }
+            }
+            catch (JsonException)
+            {
+                // Malformed JSON → fall through, treat as heartbeat.
+            }
+        }
+
+        await HandleHeartbeatAsync(deviceTopic);
     }
 
     // ── Heartbeat handler ────────────────────────────────────────────────────
@@ -247,5 +323,36 @@ public class MqttService : IHostedService, IMqttService
         // deviceTopic is the device name (firmware DEVICE_ID). Auto-register if
         // unknown so a fresh ESP32 appears in the registry on its first heartbeat.
         await deviceService.EnsureDeviceByNameAsync(deviceTopic);
+    }
+
+    // ── Door state handler ───────────────────────────────────────────────────
+    // Persist current door state on the device + push live "DoorStateChanged".
+    private async Task HandleDoorStateAsync(string deviceTopic, string? doorState)
+    {
+        if (doorState is not ("open" or "closed"))
+        {
+            _logger.LogWarning("Unknown door state '{State}' from {Device}", doorState, deviceTopic);
+            return;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var deviceService = scope.ServiceProvider.GetRequiredService<IDeviceService>();
+
+        var device = await deviceService.UpdateDoorStateAsync(deviceTopic, doorState);
+        if (device is null) return;
+
+        // Persist the actuation as a device event (also broadcasts "NewEventLog").
+        var eventLog = scope.ServiceProvider.GetRequiredService<IEventLogService>();
+        await eventLog.LogAsync(device.Id, "door", doorState);
+
+        await _hub.Clients.All.SendAsync("DoorStateChanged", new
+        {
+            deviceId = device.Id,
+            deviceName = device.Name,
+            doorState,
+            timestamp = DateTime.UtcNow,
+        });
+
+        _logger.LogInformation("Door {State} on {Device}", doorState, device.Name);
     }
 }

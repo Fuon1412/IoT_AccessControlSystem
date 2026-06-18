@@ -19,7 +19,11 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IDeviceService, DeviceService>();
 builder.Services.AddScoped<IAccessLogService, AccessLogService>();
+builder.Services.AddScoped<IEventLogService, EventLogService>();
 builder.Services.AddScoped<IRfidCardService, RfidCardService>();
+
+// Connectivity monitor — polls device heartbeats, logs online/offline transitions
+builder.Services.AddHostedService<DeviceMonitorService>();
 
 // MQTT — singleton connection, hosted service lifecycle
 builder.Services.AddSingleton<MqttService>();

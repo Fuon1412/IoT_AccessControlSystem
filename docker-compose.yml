@@ -49,12 +49,16 @@ services:
       SEED_DATA: "${SEED_DATA:-true}"
       Seed__AdminUsername: "${ADMIN_USERNAME:-admin}"
       Seed__AdminPassword: "${ADMIN_PASSWORD:-admin123}"
-      # Public broker by default (ESP32 + backend share it). Override for local mosquitto.
-      Mqtt__Host: "${MQTT_HOST:-broker.hivemq.com}"
-      Mqtt__Port: "${MQTT_PORT:-1883}"
-      Mqtt__ClientId: "${MQTT_CLIENT_ID:-iot-backend-7f3a}"
-      Mqtt__TopicPrefix: "${MQTT_TOPIC_PREFIX:-iot7f3a}"
-      Mqtt__Username: "${MQTT_USERNAME:-}"
+      # HiveMQ Cloud by default (TLS + auth). For local mosquitto: MQTT_TRANSPORT=tcp,
+      # MQTT_USE_TLS=false, MQTT_HOST=mosquitto, MQTT_PORT=1883 in .env.
+      Mqtt__Transport: "${MQTT_TRANSPORT:-tcp}"
+      Mqtt__UseTls: "${MQTT_USE_TLS:-true}"
+      Mqtt__Host: "${MQTT_HOST:-1b12128e05b64f6b8ec16de96fe975c9.s1.eu.hivemq.cloud}"
+      Mqtt__Port: "${MQTT_PORT:-8883}"
+      Mqtt__WebSocketUri: "${MQTT_WEBSOCKET_URI:-1b12128e05b64f6b8ec16de96fe975c9.s1.eu.hivemq.cloud:8884/mqtt}"
+      Mqtt__ClientId: "${MQTT_CLIENT_ID:-iot-backend}"
+      Mqtt__TopicPrefix: "${MQTT_TOPIC_PREFIX:-}"
+      Mqtt__Username: "${MQTT_USERNAME:-acs-server}"
       Mqtt__Password: "${MQTT_PASSWORD:-}"
     depends_on:
       postgres:

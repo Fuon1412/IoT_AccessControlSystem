@@ -18,4 +18,10 @@ public interface IDeviceService
     /// for ESP32 nodes). Returns the device id. Updates heartbeat as a side effect.
     /// </summary>
     Task<int> EnsureDeviceByNameAsync(string name);
+
+    /// <summary>
+    /// Persist door actuator state ("open"|"closed") reported by firmware servo.
+    /// Auto-registers the device if unknown. Returns the updated device, or null.
+    /// </summary>
+    Task<DeviceDto?> UpdateDoorStateAsync(string name, string doorState);
 }

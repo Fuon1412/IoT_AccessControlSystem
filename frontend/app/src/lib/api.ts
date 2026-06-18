@@ -1,7 +1,7 @@
 // Typed fetch wrapper. Injects JWT, handles 401 → logout.
 import { getToken, clearAuth } from './auth'
 import type {
-  LoginResponse, DeviceDto, DeviceStatusDto, AccessLogDto, UserDto, RfidCardDto,
+  LoginResponse, DeviceDto, DeviceStatusDto, AccessLogDto, EventLogDto, UserDto, RfidCardDto,
   CreateDeviceRequest, CreateUserRequest, UpdateUserRequest, RegisterCardRequest,
 } from './types'
 
@@ -73,6 +73,9 @@ export const api = {
 
   // access logs
   accessLogs: () => requestList<AccessLogDto>('/api/access-logs'),
+
+  // device event logs (door / connectivity / emergency)
+  eventLogs: () => requestList<EventLogDto>('/api/event-logs'),
 
   // access logs — employee self-history
   myAccessLogs: () => requestList<AccessLogDto>('/api/access-logs/mine'),

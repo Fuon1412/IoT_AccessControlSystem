@@ -13,22 +13,33 @@
       -> DENIED : buzzer kêu cảnh báo
     Offline / timeout -> buffer vào bộ nhớ, flush khi reconnect.
 
-  Server layer (WiFi + MQTT + SPIFFS queue) giữ nguyên logic từ bản .cpp.
+  MQTT transport:
+    Broker an toàn = wss:// (WebSocket Secure, TLS, có auth). PubSubClient
+    KHÔNG hỗ trợ WebSocket nên dùng client native của ESP-IDF (esp_mqtt_client):
+    nó tự lo TLS (cert bundle), ALPN, WebSocket, auth user/pass và auto-reconnect
+    trong task riêng. Không cần gọi loop() thủ công như PubSubClient.
+
+  Device ID:
+    KHÔNG hardcode nữa — sinh runtime từ MAC chip (esp32-door-aabbcc).
+    Mỗi board tự định danh, không cần sửa code/reflash riêng. Topic build runtime.
 
   Thư viện cần cài trong Arduino IDE (Library Manager):
     - MFRC522v2            (by GithubCommunity)
     - Adafruit SH110X      (by Adafruit)
     - Adafruit GFX Library (by Adafruit)
-    - PubSubClient         (by Nick O'Leary)
     - ArduinoJson          (by Benoit Blanchon, v7+)
+    - ESP32Servo           (by Kevin Harrington) — servo mô phỏng cửa
+  (esp_mqtt_client + esp_crt_bundle có sẵn trong ESP32 core — không cần cài thêm)
   Board: "ESP32 Dev Module"
 */
 
 #include <WiFi.h>
-#include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <SPIFFS.h>
 #include <Wire.h>
+
+#include "mqtt_client.h"
+#include "esp_crt_bundle.h"
 
 #include <MFRC522v2.h>
 #include <MFRC522DriverSPI.h>
@@ -38,46 +49,47 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH110X.h>
 
+#include <ESP32Servo.h>
+
 // ── Config ─────────────────────────────────────────────────────────────────────
 // WiFi
-#define WIFI_SSID        "Hust_B1_Staff"
-#define WIFI_PASS        ""
+#define WIFI_SSID        "Hiep T2"
+#define WIFI_PASS        "99999999"
 
-// MQTT broker — public broker for college project (no auth).
-// Local dev alt: IP máy chạy docker-compose, port 1883.
-#define MQTT_HOST        "broker.hivemq.com"
-#define MQTT_PORT        1883
-#define MQTT_USER        ""          // public broker = anonymous
-#define MQTT_PASS        ""
-#define DEVICE_ID        "esp32-door-01"
+// MQTT broker — HiveMQ Cloud, WebSocket Secure (TLS + auth). Client native ESP-IDF.
+// TLS WebSocket URL từ HiveMQ console: {cluster}:8884/mqtt
+#define MQTT_WS_URI      "wss://1b12128e05b64f6b8ec16de96fe975c9.s1.eu.hivemq.cloud:8884/mqtt"
+#define MQTT_USER        "esp32-acs"
+#define MQTT_PASS        "Phuong2004@o"
 
-// Unique project prefix — public broker is shared, prefix avoids topic
-// collision with other students. Backend MUST use the SAME prefix.
-#define TOPIC_PREFIX     "iot7f3a"
-
-// MQTT topics — prefix/access/{device}/{verb}
-#define TOPIC_SCAN       TOPIC_PREFIX "/access/" DEVICE_ID "/scan"
-#define TOPIC_RESPONSE   TOPIC_PREFIX "/access/" DEVICE_ID "/response"
-#define TOPIC_STATUS     TOPIC_PREFIX "/access/" DEVICE_ID "/status"
-#define TOPIC_COMMAND    TOPIC_PREFIX "/devices/" DEVICE_ID "/command"  // backend → ESP32 (lock/unlock)
+// Tiền tố tên thiết bị — phần sau lấy từ MAC chip lúc runtime.
+// (Bỏ TOPIC_PREFIX: cluster HiveMQ riêng + auth, không cần namespace tránh đụng.)
+#define DEVICE_PREFIX    "esp32-door-"
 
 // Pins (theo RFID.ino thực tế)
 #define PIN_RC522_SS     5      // MFRC522 SS/SDA — dùng SPI mặc định (SCK18/MISO19/MOSI23)
 #define PIN_BUZZER       32     // active buzzer — digitalWrite HIGH = kêu
+#define PIN_SERVO        15     // servo mô phỏng cửa — chân tín hiệu (PWM)
 #define OLED_ADDR        0x3C
 #define OLED_WIDTH       128
 #define OLED_HEIGHT      64
 #define OLED_RESET       -1
 
+// Servo (mô phỏng cửa) — góc đóng/mở
+#define SERVO_CLOSED_DEG 0      // cửa đóng
+#define SERVO_OPEN_DEG   90     // cửa mở
+
 // Timing
 #define HEARTBEAT_INTERVAL_MS  60000   // 60s giữa các status publish
-#define MQTT_RECONNECT_MS       5000   // delay retry khi mất kết nối
 #define RESPONSE_TIMEOUT_MS     3000   // chờ response từ backend
 #define RESULT_DISPLAY_MS       3000   // thời gian giữ kết quả trên OLED
 
 // SPIFFS retry queue
 #define QUEUE_FILE       "/queue.txt"
 #define QUEUE_MAX        50            // số event buffer tối đa, vượt thì drop oldest
+
+// Emergency command — giữ trạng thái cưỡng bức rồi tự reset về ban đầu
+#define EMERGENCY_HOLD_MS  10000       // 10s active, sau đó cửa đóng + OLED idle
 
 // ── Hardware ─────────────────────────────────────────────────────────────────────
 MFRC522DriverPinSimple ss_pin(PIN_RC522_SS);
@@ -86,9 +98,21 @@ MFRC522                rfid{driver};
 
 Adafruit_SH1106G oled = Adafruit_SH1106G(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET);
 
-// ── MQTT ─────────────────────────────────────────────────────────────────────────
-WiFiClient   wifiClient;
-PubSubClient mqtt(wifiClient);
+// Servo mô phỏng cửa
+Servo doorServo;
+bool doorOpen = false;   // trạng thái cửa hiện tại
+
+// ── MQTT (esp_mqtt_client native) ──────────────────────────────────────────────
+esp_mqtt_client_handle_t g_mqttClient = nullptr;
+volatile bool g_mqttConnected = false;
+volatile bool g_flushPending  = false;   // set khi vừa connect → flush queue trong loop()
+
+// ── Identity + topics (build runtime, không hardcode) ───────────────────────────
+String g_deviceId;        // esp32-door-<mac6>
+String g_topicScan;       // access/{device}/scan
+String g_topicResponse;   // access/{device}/response
+String g_topicStatus;     // access/{device}/status
+String g_topicCommand;    // devices/{device}/command
 
 // ── State ──────────────────────────────────────────────────────────────────────
 unsigned long lastHeartbeat = 0;
@@ -100,10 +124,15 @@ char responseName[64] = "";
 unsigned long resultShownAt = 0;
 bool showingResult = false;
 
+// Emergency latch timer — active 10s rồi reset về trạng thái ban đầu.
+bool emergencyActive = false;
+unsigned long emergencyStartAt = 0;
+
 // ── Forward declarations ──────────────────────────────────────────────────────
 void connectWifi();
-void connectMqtt();
-void onMqttMessage(char* topic, byte* payload, unsigned int length);
+void buildIdentity();
+void initMqtt();
+void mqttEventHandler(void* args, esp_event_base_t base, int32_t eventId, void* eventData);
 void handleCommand(const String& cmd);
 String readRfidUid();
 void handleScan(const String& uid);
@@ -112,6 +141,9 @@ void oledShow(const String& line1, const String& line2 = "");
 void oledIdle();
 void buzzerGrant();
 void buzzerDeny();
+void doorOpenSim();
+void doorCloseSim();
+void publishDoorState(const char* state);
 void flushSpiffsQueue();
 void enqueueSpiffs(const String& uid);
 int countQueueLines();
@@ -122,6 +154,12 @@ void setup() {
 
   pinMode(PIN_BUZZER, OUTPUT);
   digitalWrite(PIN_BUZZER, LOW);   // còi tắt khi khởi động
+
+  // Servo mô phỏng cửa — khởi động ở trạng thái đóng
+  ESP32PWM::allocateTimer(0);
+  doorServo.setPeriodHertz(50);             // servo chuẩn 50Hz
+  doorServo.attach(PIN_SERVO, 500, 2400);   // pulse min/max (us)
+  doorCloseSim();
 
   // OLED (SH1106) — I2C mặc định ESP32: SDA=GPIO21, SCL=GPIO22
   Wire.begin();
@@ -141,13 +179,8 @@ void setup() {
   }
 
   connectWifi();
-
-  mqtt.setServer(MQTT_HOST, MQTT_PORT);
-  mqtt.setCallback(onMqttMessage);
-  mqtt.setBufferSize(512);
-
-  connectMqtt();
-  flushSpiffsQueue();
+  buildIdentity();   // cần MAC → gọi sau khi WiFi init
+  initMqtt();        // esp_mqtt_client tự connect + reconnect trong task riêng
 
   oledIdle();
   Serial.println("[BOOT] Ready");
@@ -155,15 +188,17 @@ void setup() {
 
 // ── Loop ─────────────────────────────────────────────────────────────────────────
 void loop() {
-  // CRITICAL: gọi mỗi vòng lặp — keepalive + nhận message
-  if (!mqtt.connected()) {
-    connectMqtt();
+  // esp_mqtt_client chạy task riêng — không cần gọi loop() như PubSubClient.
+
+  // Flush SPIFFS queue ngay sau khi (re)connect
+  if (g_flushPending && g_mqttConnected) {
+    g_flushPending = false;
+    flushSpiffsQueue();
   }
-  mqtt.loop();
 
   // Heartbeat
-  if (millis() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-    mqtt.publish(TOPIC_STATUS, "online");
+  if (g_mqttConnected && millis() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+    esp_mqtt_client_publish(g_mqttClient, g_topicStatus.c_str(), "online", 0, 0, 0);
     lastHeartbeat = millis();
   }
 
@@ -179,11 +214,19 @@ void loop() {
   if (showingResult && millis() - resultShownAt >= RESULT_DISPLAY_MS) {
     oledIdle();
   }
+
+  // Emergency lock/open: active 10s rồi tự reset về ban đầu (cửa đóng + idle)
+  if (emergencyActive && millis() - emergencyStartAt >= EMERGENCY_HOLD_MS) {
+    emergencyActive = false;
+    Serial.println("[CMD] Emergency expired — reset to idle");
+    oledIdle();   // oledIdle() đóng cửa nếu đang mở
+  }
 }
 
 // ── WiFi ───────────────────────────────────────────────────────────────────────
 void connectWifi() {
   Serial.printf("[WiFi] Connecting to %s\n", WIFI_SSID);
+  WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
@@ -198,50 +241,102 @@ void connectWifi() {
   }
 }
 
-// ── MQTT connect + subscribe ──────────────────────────────────────────────────
-void connectMqtt() {
-  if (mqtt.connected()) return;
+// ── Identity + topics ───────────────────────────────────────────────────────────
+// DEVICE_ID = DEVICE_PREFIX + 3 byte cuối MAC (hex). Topic build từ device id.
+void buildIdentity() {
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char sfx[7];
+  snprintf(sfx, sizeof(sfx), "%02x%02x%02x", mac[3], mac[4], mac[5]);
 
-  Serial.printf("[MQTT] Connecting to %s:%d\n", MQTT_HOST, MQTT_PORT);
+  g_deviceId      = String(DEVICE_PREFIX) + sfx;
+  g_topicScan     = String("access/")  + g_deviceId + "/scan";
+  g_topicResponse = String("access/")  + g_deviceId + "/response";
+  g_topicStatus   = String("access/")  + g_deviceId + "/status";
+  g_topicCommand  = String("devices/") + g_deviceId + "/command";
 
-  bool connected = (strlen(MQTT_USER) > 0)
-    ? mqtt.connect(DEVICE_ID, MQTT_USER, MQTT_PASS)
-    : mqtt.connect(DEVICE_ID);
-
-  if (connected) {
-    Serial.println("[MQTT] Connected");
-    mqtt.subscribe(TOPIC_RESPONSE);
-    mqtt.subscribe(TOPIC_COMMAND);   // emergency lock/unlock from backend
-    flushSpiffsQueue();   // flush event đã queue khi reconnect
-  } else {
-    Serial.printf("[MQTT] Failed (rc=%d). Retry in %dms\n",
-      mqtt.state(), MQTT_RECONNECT_MS);
-    delay(MQTT_RECONNECT_MS);
-  }
+  Serial.printf("[ID] device=%s\n", g_deviceId.c_str());
 }
 
-// ── MQTT message handler ──────────────────────────────────────────────────────
+// ── MQTT init (esp_mqtt_client) ─────────────────────────────────────────────────
+void initMqtt() {
+  const char* alpn[] = { "http/1.1", NULL };   // wss handshake ALPN
+
+  esp_mqtt_client_config_t cfg = {};
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  cfg.broker.address.uri                    = MQTT_WS_URI;
+  cfg.broker.verification.alpn_protos       = alpn;
+  cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
+  cfg.credentials.username                  = MQTT_USER;
+  cfg.credentials.authentication.password   = MQTT_PASS;
+  cfg.credentials.client_id                 = g_deviceId.c_str();
+#else
+  cfg.uri               = MQTT_WS_URI;
+  cfg.alpn_protos       = alpn;
+  cfg.crt_bundle_attach = esp_crt_bundle_attach;
+  cfg.username          = MQTT_USER;
+  cfg.password          = MQTT_PASS;
+  cfg.client_id         = g_deviceId.c_str();
+#endif
+
+  g_mqttClient = esp_mqtt_client_init(&cfg);
+  esp_mqtt_client_register_event(g_mqttClient, MQTT_EVENT_ANY, mqttEventHandler, NULL);
+  esp_mqtt_client_start(g_mqttClient);
+  Serial.println("[MQTT] client started (wss)");
+}
+
+// ── MQTT event handler ──────────────────────────────────────────────────────────
 // /response : {"access":true,"name":"Nguyen Van A"}
 // /command  : {"command":"lock"|"unlock", ...}
-void onMqttMessage(char* topic, byte* payload, unsigned int length) {
-  String t(topic);
+void mqttEventHandler(void* args, esp_event_base_t base, int32_t eventId, void* eventData) {
+  esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)eventData;
 
-  JsonDocument doc;
-  if (deserializeJson(doc, payload, length) != DeserializationError::Ok) {
-    Serial.println("[MQTT] Bad JSON");
-    return;
-  }
+  switch (eventId) {
+    case MQTT_EVENT_CONNECTED:
+      g_mqttConnected = true;
+      esp_mqtt_client_subscribe(g_mqttClient, g_topicResponse.c_str(), 0);
+      esp_mqtt_client_subscribe(g_mqttClient, g_topicCommand.c_str(), 0);   // emergency lock/unlock
+      g_flushPending = true;   // flush queue trong loop() (tránh việc nặng trong task MQTT)
+      Serial.println("[MQTT] Connected & subscribed");
+      break;
 
-  if (t.endsWith("/command")) {
-    const char* cmd = doc["command"] | "";
-    handleCommand(String(cmd));
-    return;
-  }
+    case MQTT_EVENT_DISCONNECTED:
+      g_mqttConnected = false;
+      Serial.println("[MQTT] Disconnected");
+      break;
 
-  if (t.endsWith("/response")) {
-    accessGranted = doc["access"].as<bool>();
-    strlcpy(responseName, doc["name"] | "", sizeof(responseName));
-    responseReceived = true;
+    case MQTT_EVENT_DATA: {
+      // Dữ liệu không null-terminated → copy an toàn
+      char topicBuf[event->topic_len + 1];
+      memcpy(topicBuf, event->topic, event->topic_len);
+      topicBuf[event->topic_len] = '\0';
+      String t(topicBuf);
+
+      char payloadBuf[event->data_len + 1];
+      memcpy(payloadBuf, event->data, event->data_len);
+      payloadBuf[event->data_len] = '\0';
+
+      JsonDocument doc;
+      if (deserializeJson(doc, payloadBuf) != DeserializationError::Ok) {
+        Serial.println("[MQTT] Bad JSON");
+        return;
+      }
+
+      if (t.endsWith("/command")) {
+        const char* cmd = doc["command"] | "";
+        handleCommand(String(cmd));
+        return;
+      }
+
+      if (t.endsWith("/response")) {
+        accessGranted = doc["access"].as<bool>();
+        strlcpy(responseName, doc["name"] | "", sizeof(responseName));
+        responseReceived = true;
+      }
+      break;
+    }
+
+    default: break;
   }
 }
 
@@ -258,20 +353,25 @@ void handleCommand(const String& cmd) {
   Serial.printf("[CMD] EMERGENCY %s\n", cmd.c_str());
   oledShow("EMERGENCY", lock ? "Locking..." : "Opening...");
 
-  // Alarm buzzer for 5s (non-blocking-ish: keep mqtt alive between beeps)
+  // Servo mô phỏng cửa theo lệnh — latch (giữ trạng thái, không auto-close)
+  if (lock) doorCloseSim();
+  else      doorOpenSim();
+
+  // Alarm buzzer for 5s (esp_mqtt_client chạy task riêng nên delay ở đây không mất kết nối)
   unsigned long start = millis();
   while (millis() - start < 5000) {
     digitalWrite(PIN_BUZZER, HIGH);
     delay(200);
     digitalWrite(PIN_BUZZER, LOW);
     delay(200);
-    mqtt.loop();
   }
 
-  // Show forced state, latch it (no idle revert)
+  // Show forced state — giữ active EMERGENCY_HOLD_MS rồi tự reset (loop xử lý)
   oledShow(lock ? "FORCE LOCKED" : "FORCE OPENED", lock ? "Door secured" : "Door open");
-  showingResult = false;   // latch — don't auto-revert
+  showingResult = false;       // không dùng idle-revert thường
   resultShownAt = 0;
+  emergencyActive = true;
+  emergencyStartAt = millis(); // 10s tính từ lúc nhận lệnh (gồm 5s còi)
 }
 
 // ── RFID UID read ─────────────────────────────────────────────────────────────
@@ -291,7 +391,7 @@ void handleScan(const String& uid) {
   oledShow("Scanning...", uid);
 
   // Offline: queue local, báo còi
-  if (!mqtt.connected()) {
+  if (!g_mqttConnected) {
     Serial.println("[SCAN] Offline — queuing to SPIFFS");
     enqueueSpiffs(uid);
     oledShow("Offline", "Queued");
@@ -303,17 +403,16 @@ void handleScan(const String& uid) {
 
   // Publish scan
   JsonDocument doc;
-  doc["device"] = DEVICE_ID;
+  doc["device"] = g_deviceId;
   doc["uid"] = uid;
   char buf[128];
   serializeJson(doc, buf);
-  mqtt.publish(TOPIC_SCAN, buf);
+  esp_mqtt_client_publish(g_mqttClient, g_topicScan.c_str(), buf, 0, 0, 0);
 
-  // Chờ response từ backend
+  // Chờ response từ backend (esp_mqtt_client set cờ trong task riêng)
   responseReceived = false;
   unsigned long start = millis();
   while (!responseReceived && millis() - start < RESPONSE_TIMEOUT_MS) {
-    mqtt.loop();
     delay(10);
   }
 
@@ -337,7 +436,7 @@ void actuate(bool granted, const String& name) {
     // Hiện thông tin người dùng trên OLED (yêu cầu flow)
     oledShow("GRANTED", name.length() > 0 ? name : "Welcome");
     buzzerGrant();
-    // TODO: relay mở cửa nếu có — digitalWrite(PIN_RELAY, HIGH); delay; LOW;
+    doorOpenSim();   // servo mở cửa — tự đóng khi OLED revert idle (RESULT_DISPLAY_MS)
   } else {
     Serial.println("[ACCESS] DENIED");
     oledShow("DENIED!", "Card not valid");
@@ -366,7 +465,8 @@ void oledShow(const String& line1, const String& line2) {
 void oledIdle() {
   showingResult = false;
   resultShownAt = 0;
-  oledShow("Scan card", DEVICE_ID);
+  if (doorOpen) doorCloseSim();   // cửa tự đóng khi quay về màn chờ
+  oledShow("Scan card", g_deviceId);
 }
 
 // ── Buzzer (active buzzer — digitalWrite) ─────────────────────────────────────
@@ -383,6 +483,41 @@ void buzzerDeny() {
     delay(150);
     digitalWrite(PIN_BUZZER, LOW);
     delay(100);
+  }
+}
+
+// ── Servo (mô phỏng cửa) ──────────────────────────────────────────────────────
+// Mở: quay tới SERVO_OPEN_DEG. Đóng: về SERVO_CLOSED_DEG.
+void doorOpenSim() {
+  doorServo.write(SERVO_OPEN_DEG);
+  doorOpen = true;
+  Serial.println("[DOOR] OPEN (servo)");
+  publishDoorState("open");
+}
+
+void doorCloseSim() {
+  doorServo.write(SERVO_CLOSED_DEG);
+  doorOpen = false;
+  Serial.println("[DOOR] CLOSED (servo)");
+  publishDoorState("closed");
+}
+
+// Publish trạng thái cửa lên status topic → backend/dashboard log được.
+// Guard: chỉ publish khi state thực sự đổi (giảm spam broker/DB).
+// lastDoorPublished chỉ cập nhật sau khi publish thành công → reconnect vẫn báo lại.
+char lastDoorPublished[8] = "";   // "", "open", "closed"
+
+void publishDoorState(const char* state) {
+  if (strcmp(lastDoorPublished, state) == 0) return;   // không đổi — bỏ qua
+  if (!g_mqttConnected) return;                         // chưa kết nối — giữ nguyên để báo lại sau
+
+  JsonDocument doc;
+  doc["device"] = g_deviceId;
+  doc["door"] = state;
+  char buf[96];
+  serializeJson(doc, buf);
+  if (esp_mqtt_client_publish(g_mqttClient, g_topicStatus.c_str(), buf, 0, 0, 0) >= 0) {
+    strlcpy(lastDoorPublished, state, sizeof(lastDoorPublished));
   }
 }
 
@@ -408,7 +543,7 @@ void enqueueSpiffs(const String& uid) {
   }
 
   JsonDocument doc;
-  doc["device"] = DEVICE_ID;
+  doc["device"] = g_deviceId;
   doc["uid"] = uid;
   char line[128];
   serializeJson(doc, line);
@@ -422,7 +557,7 @@ void enqueueSpiffs(const String& uid) {
 }
 
 void flushSpiffsQueue() {
-  if (!mqtt.connected()) return;
+  if (!g_mqttConnected) return;
   if (!SPIFFS.exists(QUEUE_FILE)) return;
 
   File f = SPIFFS.open(QUEUE_FILE, "r");
@@ -434,7 +569,7 @@ void flushSpiffsQueue() {
     line.trim();
     if (line.length() == 0) continue;
 
-    if (mqtt.publish(TOPIC_SCAN, line.c_str())) {
+    if (esp_mqtt_client_publish(g_mqttClient, g_topicScan.c_str(), line.c_str(), 0, 0, 0) >= 0) {
       flushed++;
     } else {
       Serial.println("[QUEUE] Flush publish failed — stopping");

@@ -8,6 +8,11 @@ public class Device
     public string Location { get; set; } = string.Empty;
     public bool IsActive { get; set; } = true;
     public DateTime? LastHeartbeat { get; set; }
+
+    // Door actuator state reported by firmware servo: "open" | "closed" | "unknown".
+    public string DoorState { get; set; } = "unknown";
+    public DateTime? LastDoorStateChange { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public ICollection<AccessLog> AccessLogs { get; set; } = [];

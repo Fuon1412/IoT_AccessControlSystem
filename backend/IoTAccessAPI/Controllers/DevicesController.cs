@@ -15,12 +15,14 @@ public class DevicesController : ControllerBase
     private readonly IDeviceService _deviceService;
     private readonly IMqttService _mqtt;
     private readonly IAuthService _auth;
+    private readonly IEventLogService _events;
 
-    public DevicesController(IDeviceService deviceService, IMqttService mqtt, IAuthService auth)
+    public DevicesController(IDeviceService deviceService, IMqttService mqtt, IAuthService auth, IEventLogService events)
     {
         _deviceService = deviceService;
         _mqtt = mqtt;
         _auth = auth;
+        _events = events;
     }
 
     [HttpGet]
@@ -103,6 +105,9 @@ public class DevicesController : ControllerBase
 
         var payload = JsonSerializer.Serialize(new { command = action, by = username });
         await _mqtt.PublishCommandAsync(device.Name, payload);
+
+        // Persist who forced what (also broadcasts "NewEventLog").
+        await _events.LogAsync(device.Id, "emergency", action, username);
 
         return Ok(new { sent = true, device = device.Name, action });
     }

@@ -30,10 +30,11 @@ Frontend ← SignalR push from MqttService (planned; currently REST poll)
 
 ## MQTT Architecture
 
-- **Broker**: Mosquitto (Docker: port 1883)
-- **ESP32 lib**: PubSubClient
-- **Backend lib**: MQTTnet (BackgroundService)
-- **Cloud alt**: HiveMQ Cloud / EMQX Cloud (no self-host)
+- **Broker**: HiveMQ Cloud (TLS + user/pass auth). Backend → native MQTT-over-TLS `:8883` (`Mqtt:Transport=tcp`, `UseTls=true`, cred `acs-server`). ESP32 → wss `:8884/mqtt` (cred `esp32-acs`). Mosquitto/Docker `1883` still usable for local dev (`Mqtt:Transport=tcp`, `UseTls=false`).
+- **ESP32 lib**: `esp_mqtt_client` (ESP-IDF native) — wss/TLS (cert bundle) + ALPN + auth, runs own task + auto-reconnect. PubSubClient dropped (no WebSocket support).
+- **Backend lib**: MQTTnet (BackgroundService) — `WithWebSocketServer` + `WithTlsOptions` + credentials, config-driven (`Mqtt:Transport` = `websocket`|`tcp`, `Mqtt:WebSocketUri`, `Mqtt:UseTls`).
+- **Device ID**: NOT hardcoded — firmware derives `esp32-door-<mac6>` from chip MAC at runtime; topics built at runtime. Backend auto-registers on first scan/heartbeat.
+- **Topic prefix**: dropped (was `iot7f3a` for shared public broker). Private HiveMQ cluster needs none. `Mqtt:TopicPrefix` optional — set both sides only if re-sharing a broker.
 
 ### Topic Map
 ```
@@ -45,8 +46,8 @@ devices/{deviceId}/command  # Backend → ESP32 commands (unlock, reboot)
 
 ### Payload Schema
 ```json
-// ESP32 → broker (scan)
-{"device": "esp32-door-01", "uid": "A1B2C3D4"}
+// ESP32 → broker (scan) — device = esp32-door-<mac6>, runtime-derived
+{"device": "esp32-door-a1b2c3", "uid": "A1B2C3D4"}
 
 // Backend → ESP32 (response)
 {"access": true, "name": "Nguyen Van A"}
@@ -58,13 +59,14 @@ devices/{deviceId}/command  # Backend → ESP32 commands (unlock, reboot)
 - CORS must include `http://localhost:5173` in dev, update `Program.cs` for prod
 - EF migrations run before first API call — `dotnet ef database update`
 - ESP32 card list hardcoded in firmware — update + reflash to add/remove users
-- MQTT broker must start before backend — MqttService connect on startup
-- `mqtt.loop()` must run every loop() iteration on ESP32 — blocks if omitted
+- MQTT broker reachable before backend — MqttService retries connect on startup (5s loop)
+- `esp_mqtt_client` runs own task — no `mqtt.loop()` needed; firmware polls `g_mqttConnected`/`responseReceived` flags
+- Broker URI/auth: firmware `#define MQTT_WS_URI/USER/PASS` (top of `.ino`); backend `Mqtt:*` in `appsettings.json`. Keep `TopicPrefix` identical both sides
 
 ## Known Weak Points
 
 - No auth on API endpoints — anyone on network hit `/api/users`
-- No auth on MQTT broker — add username/password in mosquitto.conf for prod
+- MQTT broker now auth'd (user/pass over TLS wss). Creds in plaintext config/firmware — fine for project, rotate before real prod
 - RFID UID spoofable — physical security only, not cryptographic
 - SD card log + Postgres log desync if Wi-Fi drop mid-write
 - MQTT QoS 0 currently — ESP32 SPIFFS queue buffers on disconnect/timeout, flush on reconnect (mitigates loss)
@@ -102,6 +104,8 @@ devices/{deviceId}/command  # Backend → ESP32 commands (unlock, reboot)
 - `dotnet run` uses `https://localhost:7114`, not `http` — check `VITE_API_URL` in frontend `.env`
 - TanStack Router gen route types on save — don't hand-edit `routeTree.gen.ts`. New routes need a dev-server run to regen before `tsc` build passes
 - EF Core uses Npgsql (Postgres). Migrations are Postgres-native — `dotnet ef migrations add` needs Npgsql restored
+- Only .NET 10 runtime on this box but project targets net8.0 — `dotnet ef` fails unless `DOTNET_ROLL_FORWARD=LatestMajor` is set for the command
+- Two log tables: `AccessLog` (RFID scans, written by MqttService scan handler) + `EventLog` (door/connectivity/emergency). Door/emergency events written inline; connectivity online/offline logged by `DeviceMonitorService` (polls heartbeat every 60s, logs on transition only). All broadcast over SignalR (`NewAccessLog`/`NewEventLog`/`DoorStateChanged`)
 - All API endpoints JWT-gated except `/api/auth/login` + `/api/health`. UI needs seeded Admin (SEED_DATA=true) to first login
 - Debug MQTT with **MQTT Explorer** (GUI) — connect to broker, watch all topics live
 
@@ -175,7 +179,8 @@ IoT firmware for physical access. Talks to broker via MQTT.
 GET  /api/health         - Health check
 GET  /api/devices        - List all devices
 GET  /api/users          - List all users
-GET  /api/access-logs    - List access logs
+GET  /api/access-logs    - List access logs (RFID scans)
+GET  /api/event-logs     - List device events (door/connectivity/emergency, Admin)
 GET  /swagger            - API documentation
 ```
 

@@ -1,21 +1,23 @@
-// SignalR connection to /hubs/access. Pushes "NewAccessLog" events.
+// SignalR connection to /hubs/access. Pushes "NewAccessLog" + "DoorStateChanged".
 import {
   HubConnection, HubConnectionBuilder, HubConnectionState, LogLevel,
 } from '@microsoft/signalr'
 import { useEffect, useState } from 'react'
 import { API_URL } from './api'
 import { getToken } from './auth'
-import type { AccessLogDto } from './types'
+import type { AccessLogDto, DoorStateEvent, EventLogDto } from './types'
 
 export type ConnState = 'connecting' | 'connected' | 'disconnected'
 
 let connection: HubConnection | null = null
 let starting: Promise<void> | null = null
 
-// Module-level subscriber set. The "NewAccessLog" handler is registered ONCE
-// on the singleton connection; components add/remove callbacks here.
-// This avoids the StrictMode on/off race that left the connection handlerless.
+// Module-level subscriber sets. Handlers are registered ONCE on the singleton
+// connection; components add/remove callbacks here. This avoids the StrictMode
+// on/off race that left the connection handlerless.
 const subscribers = new Set<(log: AccessLogDto) => void>()
+const doorSubscribers = new Set<(e: DoorStateEvent) => void>()
+const eventSubscribers = new Set<(e: EventLogDto) => void>()
 
 function getConnection(): HubConnection {
   if (connection) return connection
@@ -27,9 +29,15 @@ function getConnection(): HubConnection {
     .configureLogging(LogLevel.Warning)
     .build()
 
-  // Register handler once for the lifetime of the connection.
+  // Register handlers once for the lifetime of the connection.
   connection.on('NewAccessLog', (log: AccessLogDto) => {
     subscribers.forEach((cb) => cb(log))
+  })
+  connection.on('DoorStateChanged', (e: DoorStateEvent) => {
+    doorSubscribers.forEach((cb) => cb(e))
+  })
+  connection.on('NewEventLog', (e: EventLogDto) => {
+    eventSubscribers.forEach((cb) => cb(e))
   })
 
   return connection
@@ -77,4 +85,32 @@ export function useAccessFeed(onLog: (log: AccessLogDto) => void): ConnState {
   }, [onLog])
 
   return state
+}
+
+/**
+ * Subscribe to live door-state events ("DoorStateChanged"). Shares the singleton
+ * connection with useAccessFeed; ensures it is started for door-only pages.
+ */
+export function useDoorFeed(onDoor: (e: DoorStateEvent) => void): void {
+  useEffect(() => {
+    const conn = getConnection()
+    doorSubscribers.add(onDoor)
+    ensureStarted(conn).catch(() => { /* state surfaced via useAccessFeed */ })
+
+    return () => { doorSubscribers.delete(onDoor) }
+  }, [onDoor])
+}
+
+/**
+ * Subscribe to live device events ("NewEventLog" — door/connectivity/emergency).
+ * Shares the singleton connection.
+ */
+export function useEventFeed(onEvent: (e: EventLogDto) => void): void {
+  useEffect(() => {
+    const conn = getConnection()
+    eventSubscribers.add(onEvent)
+    ensureStarted(conn).catch(() => { /* state surfaced via useAccessFeed */ })
+
+    return () => { eventSubscribers.delete(onEvent) }
+  }, [onEvent])
 }

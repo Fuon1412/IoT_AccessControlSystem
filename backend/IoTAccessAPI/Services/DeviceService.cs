@@ -120,6 +120,29 @@ public class DeviceService : IDeviceService
         return true;
     }
 
+    public async Task<DeviceDto?> UpdateDoorStateAsync(string name, string doorState)
+    {
+        var device = await _db.Devices.FirstOrDefaultAsync(d => d.Name == name);
+        if (device is null)
+        {
+            // Door event from an unknown node → self-provision (mirror EnsureDeviceByNameAsync).
+            device = new Device
+            {
+                Name = name,
+                MacAddress = $"auto:{name}",
+                Location = "Auto-registered",
+                IsActive = true,
+            };
+            _db.Devices.Add(device);
+        }
+
+        device.DoorState = doorState;
+        device.LastDoorStateChange = DateTime.UtcNow;
+        device.LastHeartbeat = DateTime.UtcNow;   // door event also proves liveness
+        await _db.SaveChangesAsync();
+        return ToDto(device);
+    }
+
     private static DeviceDto ToDto(Device d) =>
-        new(d.Id, d.Name, d.MacAddress, d.Location, d.IsActive, d.LastHeartbeat, d.CreatedAt);
+        new(d.Id, d.Name, d.MacAddress, d.Location, d.IsActive, d.LastHeartbeat, d.DoorState, d.LastDoorStateChange, d.CreatedAt);
 }

@@ -1,8 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { api } from '../lib/api'
-import type { DeviceDto } from '../lib/types'
+import type { DeviceDto, DoorState, DoorStateEvent } from '../lib/types'
+import { useDoorFeed } from '../lib/signalr'
 import { Panel, Table, Th, Td, StatusLED, Badge, Button, Input, StateLine, type Signal } from '../components/ui'
 import { timeAgo } from '../lib/utils'
 
@@ -15,6 +16,12 @@ function deviceSignal(d: DeviceDto): { sig: Signal; label: string; pulse: boolea
   if (!d.lastHeartbeat) return { sig: 'amber', label: 'NEVER SEEN', pulse: false }
   const online = new Date(d.lastHeartbeat).getTime() > Date.now() - ONLINE_WINDOW_MS
   return online ? { sig: 'green', label: 'ONLINE', pulse: true } : { sig: 'red', label: 'OFFLINE', pulse: false }
+}
+
+function doorSignal(state: DoorState): { sig: Signal; label: string; pulse: boolean } {
+  if (state === 'open') return { sig: 'amber', label: 'OPEN', pulse: true }
+  if (state === 'closed') return { sig: 'green', label: 'CLOSED', pulse: false }
+  return { sig: 'dim', label: '—', pulse: false }
 }
 
 function Devices() {
@@ -31,6 +38,15 @@ function Devices() {
     mutationFn: (id: number) => api.deleteDevice(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['devices'] }),
   })
+
+  // Live door state — patch the cached device list as servo events arrive.
+  const onDoor = useCallback((e: DoorStateEvent) => {
+    qc.setQueryData<DeviceDto[]>(['devices'], (prev) =>
+      prev?.map((d) => d.id === e.deviceId
+        ? { ...d, doorState: e.doorState, lastDoorStateChange: e.timestamp }
+        : d))
+  }, [qc])
+  useDoorFeed(onDoor)
 
   return (
     <Panel
@@ -58,14 +74,16 @@ function Devices() {
       {data && data.length > 0 && (
         <Table>
           <thead>
-            <tr><Th>Status</Th><Th>Name</Th><Th>Location</Th><Th>MAC</Th><Th>Last seen</Th><Th /></tr>
+            <tr><Th>Status</Th><Th>Door</Th><Th>Name</Th><Th>Location</Th><Th>MAC</Th><Th>Last seen</Th><Th /></tr>
           </thead>
           <tbody>
             {data.map((d) => {
               const s = deviceSignal(d)
+              const door = doorSignal(d.doorState)
               return (
                 <tr key={d.id} className="hover:bg-[var(--color-surface-2)]">
                   <Td><StatusLED signal={s.sig} pulse={s.pulse} label={s.label} /></Td>
+                  <Td><StatusLED signal={door.sig} pulse={door.pulse} label={door.label} /></Td>
                   <Td className="font-medium text-[var(--color-ink)]">{d.name}</Td>
                   <Td>{d.location || '—'}</Td>
                   <Td className="font-mono text-xs text-[var(--color-ink-3)]">{d.macAddress || '—'}</Td>

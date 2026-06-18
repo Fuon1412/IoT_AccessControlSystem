@@ -11,6 +11,7 @@ public class AppDbContext : DbContext
     public DbSet<Device> Devices { get; set; }
     public DbSet<AccessLog> AccessLogs { get; set; }
     public DbSet<RfidCard> RfidCards { get; set; }
+    public DbSet<EventLog> EventLogs { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -37,6 +38,16 @@ public class AppDbContext : DbContext
                   .WithMany()
                   .HasForeignKey(a => a.UserId)
                   .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<EventLog>(entity =>
+        {
+            entity.HasIndex(e => e.Timestamp);
+            entity.HasIndex(e => new { e.DeviceId, e.EventType });
+            entity.HasOne(e => e.Device)
+                  .WithMany()
+                  .HasForeignKey(e => e.DeviceId)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<RfidCard>(entity =>
